@@ -44,20 +44,22 @@ camVideo.style.cssText = 'position:fixed; bottom:12px; left:12px; width:240px; h
 camVideo.style.transform = 'scaleX(-1)';
 
 function attachVideoTexture() {
-  if (videoTexture || !material) return;
   if (camVideo.videoWidth > 0 && camVideo.videoHeight > 0) {
-    videoTexture = new THREE.VideoTexture(camVideo);
-    videoTexture.minFilter = THREE.LinearFilter;
-    videoTexture.magFilter = THREE.LinearFilter;
-    videoTexture.format = THREE.RGBAFormat;
-    // mirror texture
-    videoTexture.wrapS = THREE.RepeatWrapping;
-    videoTexture.repeat.x = -1;
-    videoTexture.offset.x = 1;
-    material.map = videoTexture;
-    material.needsUpdate = true;
+    // Create/update overlay texture (for the projection quad)
+    if (!videoTexture && material) {
+      videoTexture = new THREE.VideoTexture(camVideo);
+      videoTexture.minFilter = THREE.LinearFilter;
+      videoTexture.magFilter = THREE.LinearFilter;
+      videoTexture.format = THREE.RGBAFormat;
+      // mirror texture
+      videoTexture.wrapS = THREE.RepeatWrapping;
+      videoTexture.repeat.x = -1;
+      videoTexture.offset.x = 1;
+      material.map = videoTexture;
+      material.needsUpdate = true;
+    }
 
-    // also update background
+    // Create/update background texture (for full-screen background)
     if (!backgroundTexture) {
       backgroundTexture = new THREE.VideoTexture(camVideo);
       backgroundTexture.minFilter = THREE.LinearFilter;
@@ -66,14 +68,17 @@ function attachVideoTexture() {
       backgroundTexture.wrapS = THREE.RepeatWrapping;
       backgroundTexture.repeat.x = -1;
       backgroundTexture.offset.x = 1;
+      console.log('Background texture created');
     }
-    if (backgroundMesh) {
+    
+    if (backgroundMesh && backgroundTexture) {
       backgroundMesh.material.map = backgroundTexture;
       backgroundMesh.material.needsUpdate = true;
+      console.log('Background texture attached to mesh');
     }
 
     console.log('Webcam texture attached', camVideo.videoWidth, camVideo.videoHeight);
-    helpText.innerText = 'Camera ready. Make a pinch to interact.';
+    helpText.innerText = 'Camera ready. Close hand (fist) near corner to grab.';
   }
 }
 
@@ -134,12 +139,18 @@ const aspect = window.innerWidth / window.innerHeight;
 const height = 2 * Math.tan((fov * Math.PI / 180) / 2) * cameraDistance;
 const width = height * aspect;
 const bgGeo = new THREE.PlaneGeometry(width * 1.2, height * 1.2); // slightly larger to ensure coverage
-const bgPlaceholder = new THREE.DataTexture(new Uint8Array([10, 10, 10, 255]), 1, 1, THREE.RGBAFormat);
+const bgPlaceholder = new THREE.DataTexture(new Uint8Array([20, 20, 20, 255]), 1, 1, THREE.RGBAFormat);
 bgPlaceholder.needsUpdate = true;
-const bgMat = new THREE.MeshBasicMaterial({ map: bgPlaceholder, depthWrite: false });
+const bgMat = new THREE.MeshBasicMaterial({ 
+  map: bgPlaceholder, 
+  depthWrite: false,
+  side: THREE.DoubleSide // ensure it's visible from camera side
+});
 backgroundMesh = new THREE.Mesh(bgGeo, bgMat);
 backgroundMesh.position.set(0, 0, -1.5); // behind the overlay quad
+backgroundMesh.renderOrder = -1; // render first (behind everything)
 scene.add(backgroundMesh);
+console.log('Background mesh created at z=-1.5, size:', width * 1.2, 'x', height * 1.2);
 
 // a parent group for the projection window so we can scale/rotate as a whole (overlay)
 const windowGroup = new THREE.Group();
@@ -505,9 +516,12 @@ function animate(){
   }
   applyCornerPositionsToGeometry();
   
-  // update video texture if it's a video (Three.VideoTexture auto-updates)
+  // update video textures if they're videos (Three.VideoTexture auto-updates)
   if (videoTexture && videoTexture.image && videoTexture.image.readyState >= 2) {
     videoTexture.needsUpdate = true;
+  }
+  if (backgroundTexture && backgroundTexture.image && backgroundTexture.image.readyState >= 2) {
+    backgroundTexture.needsUpdate = true;
   }
   // render
   renderer.render(scene, camera);
