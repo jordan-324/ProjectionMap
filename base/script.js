@@ -4,7 +4,7 @@
 // ============ CONFIG ============
 const mediaSrc = null; // if null, we use the webcam stream or sample fallback
 const useWebcamForTexture = true; // show live webcam inside the window by default
-const maxHands = 1; // single-hand control (can expand later)
+const maxHands = 2; // allow two hands
 const pinchThreshold = 0.08; // was 0.05; higher = easier pinch detect
 const cornerPickThreshold = 0.12; // was 0.08; higher = easier to grab corners
 
@@ -32,12 +32,16 @@ let mediaElement = camVideo; // can be swapped to a <video> or <img> from file i
 let videoTexture = null;
 let backgroundTexture = null;
 let backgroundMesh = null;
+let overlayCanvas = null;
+let overlayCtx = null;
 
 // Small on-page preview to verify the webcam feed (slightly transparent, non-interactive)
 camVideo.id = 'camPreview';
 camVideo.width = 320;
 camVideo.height = 180;
 camVideo.style.cssText = 'position:fixed; bottom:12px; left:12px; width:240px; height:135px; opacity:0.4; z-index:50; pointer-events:none; background:#111;';
+// Mirror the video element for a selfie-style preview
+camVideo.style.transform = 'scaleX(-1)';
 
 function attachVideoTexture() {
   if (videoTexture || !material) return;
@@ -46,6 +50,10 @@ function attachVideoTexture() {
     videoTexture.minFilter = THREE.LinearFilter;
     videoTexture.magFilter = THREE.LinearFilter;
     videoTexture.format = THREE.RGBAFormat;
+    // mirror texture
+    videoTexture.wrapS = THREE.RepeatWrapping;
+    videoTexture.repeat.x = -1;
+    videoTexture.offset.x = 1;
     material.map = videoTexture;
     material.needsUpdate = true;
 
@@ -55,6 +63,9 @@ function attachVideoTexture() {
       backgroundTexture.minFilter = THREE.LinearFilter;
       backgroundTexture.magFilter = THREE.LinearFilter;
       backgroundTexture.format = THREE.RGBAFormat;
+      backgroundTexture.wrapS = THREE.RepeatWrapping;
+      backgroundTexture.repeat.x = -1;
+      backgroundTexture.offset.x = 1;
     }
     if (backgroundMesh) {
       backgroundMesh.material.map = backgroundTexture;
@@ -98,6 +109,14 @@ const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
 container.appendChild(renderer.domElement);
+
+// 2D overlay for hand visualization
+overlayCanvas = document.createElement('canvas');
+overlayCanvas.width = window.innerWidth;
+overlayCanvas.height = window.innerHeight;
+overlayCanvas.style.cssText = 'position:absolute; inset:0; z-index:15; pointer-events:none;';
+overlayCtx = overlayCanvas.getContext('2d');
+container.appendChild(overlayCanvas);
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 0, 2);
@@ -277,8 +296,12 @@ hands.setOptions({
 });
 
 let lastHand = null;
+let allHands = [];
 
 hands.onResults((results) => {
+  allHands = results.multiHandLandmarks || [];
+  drawHandsOverlay(allHands);
+
   if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
     lastHand = null;
     isPinching = false;
@@ -356,6 +379,55 @@ hands.onResults((results) => {
   }
 });
 
+// simple 2D overlay showing hand landmarks/lines
+const handColors = ['#00e0ff', '#ff7a00'];
+function drawHandsOverlay(handsLm) {
+  if (!overlayCtx) return;
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+  handsLm.forEach((lm, idx) => {
+    const color = handColors[idx % handColors.length];
+    // draw connections (subset)
+    const connections = [
+      [0,1],[1,2],[2,3],[3,4],      // thumb
+      [0,5],[5,6],[6,7],[7,8],      // index
+      [5,9],[9,10],[10,11],[11,12], // middle
+      [9,13],[13,14],[14,15],[15,16], // ring
+      [13,17],[17,18],[18,19],[19,20], // pinky
+      [0,17] // wrist to pinky base
+    ];
+    overlayCtx.lineWidth = 3;
+    overlayCtx.strokeStyle = color;
+    overlayCtx.fillStyle = color;
+    overlayCtx.globalAlpha = 0.9;
+
+    overlayCtx.beginPath();
+    connections.forEach(([a,b], i) => {
+      const ax = lm[a].x * overlayCanvas.width;
+      const ay = lm[a].y * overlayCanvas.height;
+      const bx = lm[b].x * overlayCanvas.width;
+      const by = lm[b].y * overlayCanvas.height;
+      overlayCtx.moveTo(ax, ay);
+      overlayCtx.lineTo(bx, by);
+    });
+    overlayCtx.stroke();
+
+    lm.forEach((p) => {
+      const x = p.x * overlayCanvas.width;
+      const y = p.y * overlayCanvas.height;
+      overlayCtx.beginPath();
+      overlayCtx.arc(x, y, 5, 0, Math.PI * 2);
+      overlayCtx.fill();
+    });
+
+    // label
+    const wrist = lm[0];
+    overlayCtx.font = '14px system-ui';
+    overlayCtx.fillStyle = color;
+    overlayCtx.fillText(`Hand ${idx+1}`, wrist.x * overlayCanvas.width + 8, wrist.y * overlayCanvas.height - 8);
+  });
+}
+
 // camera_utils for feeding video frames to hands
 const cameraFeed = new Camera(camVideo, {
   onFrame: async () => {
@@ -378,6 +450,8 @@ animate();
 // handle window resize
 window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
+  overlayCanvas.width = window.innerWidth;
+  overlayCanvas.height = window.innerHeight;
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
 });
