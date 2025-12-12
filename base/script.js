@@ -200,8 +200,10 @@ let startScale = 1.0;
 let currentScale = 1.0;
 
 // convert normalized 0..1 hand coords (MediaPipe) to NDC (-1 .. 1)
+// Mirror hand coords horizontally to match mirrored video view
 function screenToNDC(xNorm, yNorm){
-  return { x: xNorm * 2 - 1, y: - (yNorm * 2 - 1) };
+  const mirroredX = 1 - xNorm;
+  return { x: mirroredX * 2 - 1, y: - (yNorm * 2 - 1) };
 }
 
 // move a corner given an ndc coordinate (casts a ray from camera into z=0 plane)
