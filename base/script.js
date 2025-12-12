@@ -27,83 +27,17 @@ document.body.appendChild(camVideo);
 
 // A separate displayMedia (the one mapped into the quad). By default we'll use camVideo as texture.
 let mediaElement = camVideo; // can be swapped to a <video> or <img> from file input
-let videoTexture = null; // will be created after video is ready
-let material = null; // will be set after material is created
-
-// Function to create video texture when video is ready
-function createVideoTexture() {
-  if (!videoTexture && useWebcamForTexture && material) {
-    // For MediaStream, check if video is playing or has valid dimensions
-    if (camVideo.videoWidth > 0 && camVideo.videoHeight > 0) {
-      videoTexture = new THREE.VideoTexture(camVideo);
-      videoTexture.minFilter = THREE.LinearFilter;
-      videoTexture.magFilter = THREE.LinearFilter;
-      videoTexture.format = THREE.RGBAFormat;
-      material.map = videoTexture;
-      material.needsUpdate = true;
-      console.log('Video texture created with webcam stream');
-    }
-  }
-}
 
 // Initialize camera
 async function startCamera() {
-  // Check if we're on a secure context (HTTPS or localhost)
-  const isSecureContext = window.isSecureContext || location.protocol === 'https:' || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-  
-  if (!isSecureContext) {
-    helpText.innerText = '⚠️ Camera requires HTTPS or localhost. Please use a local server (see README).';
-    console.error('Camera access requires secure context (HTTPS or localhost). Current protocol:', location.protocol);
-    return;
-  }
-  
-  // Check if getUserMedia is available
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    helpText.innerText = '⚠️ Camera API not available in this browser.';
-    console.error('getUserMedia not available');
-    return;
-  }
-  
   try {
-    console.log('Requesting camera access...');
     const s = await navigator.mediaDevices.getUserMedia({ video: { width:1280, height:720 }, audio:false });
-    console.log('Camera stream obtained:', s);
     camVideo.srcObject = s;
     await camVideo.play();
-    console.log('Video element playing. Dimensions:', camVideo.videoWidth, 'x', camVideo.videoHeight);
-    
-    // Wait for video to be ready before creating texture
-    // For MediaStream, we need to wait for video dimensions to be available
-    let textureCreationAttempted = false;
-    const tryCreateTexture = () => {
-      if (textureCreationAttempted && videoTexture) return; // Already created
-      if (camVideo.videoWidth > 0 && camVideo.videoHeight > 0) {
-        textureCreationAttempted = true;
-        createVideoTexture();
-      } else if (!textureCreationAttempted) {
-        // Try again after a short delay
-        setTimeout(tryCreateTexture, 100);
-      }
-    };
-    // Start trying immediately and also on various events
-    camVideo.addEventListener('loadedmetadata', tryCreateTexture, { once: true });
-    camVideo.addEventListener('playing', tryCreateTexture, { once: true });
-    setTimeout(tryCreateTexture, 200);
-    
     helpText.innerText = 'Camera ready. Make a pinch to interact.';
   } catch (e) {
-    let errorMsg = 'Camera access denied or not available.';
-    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') {
-      errorMsg = '⚠️ Camera permission denied. Please allow camera access.';
-    } else if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') {
-      errorMsg = '⚠️ No camera found. Please connect a camera.';
-    } else if (e.name === 'NotReadableError' || e.name === 'TrackStartError') {
-      errorMsg = '⚠️ Camera is being used by another application.';
-    } else if (e.name === 'OverconstrainedError') {
-      errorMsg = '⚠️ Camera does not support requested settings.';
-    }
-    helpText.innerText = errorMsg;
-    console.error('Camera error:', e.name, e.message);
+    helpText.innerText = 'Camera access denied or not available.';
+    console.error(e);
   }
 }
 startCamera();
@@ -152,16 +86,13 @@ geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
 geometry.setIndex(new THREE.BufferAttribute(indices, 1));
 geometry.computeVertexNormals();
 
-// Video texture - will be created after camera is ready
-// Create a placeholder texture for now
-const placeholderTexture = new THREE.DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1, THREE.RGBAFormat);
-placeholderTexture.needsUpdate = true;
+// Video texture
+const videoTexture = new THREE.VideoTexture(mediaElement);
+videoTexture.minFilter = THREE.LinearFilter;
+videoTexture.magFilter = THREE.LinearFilter;
+videoTexture.format = THREE.RGBAFormat;
 
-material = new THREE.MeshBasicMaterial({ map: placeholderTexture, toneMapped: false });
-// Try to create video texture if video is already ready
-if (camVideo.videoWidth > 0 && camVideo.videoHeight > 0) {
-  createVideoTexture();
-}
+const material = new THREE.MeshBasicMaterial({ map: videoTexture, toneMapped: false });
 const mesh = new THREE.Mesh(geometry, material);
 windowGroup.add(mesh);
 
@@ -382,9 +313,6 @@ cameraFeed.start();
 function animate(){
   requestAnimationFrame(animate);
   // update video texture if it's a video (Three.VideoTexture auto-updates)
-  if (videoTexture && videoTexture.image && videoTexture.image.readyState >= 2) {
-    videoTexture.needsUpdate = true;
-  }
   // render
   renderer.render(scene, camera);
 }
