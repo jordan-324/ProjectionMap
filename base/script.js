@@ -27,17 +27,50 @@ document.body.appendChild(camVideo);
 
 // A separate displayMedia (the one mapped into the quad). By default we'll use camVideo as texture.
 let mediaElement = camVideo; // can be swapped to a <video> or <img> from file input
+let videoTexture = null;
+
+// Small on-page preview to verify the webcam feed (slightly transparent, non-interactive)
+camVideo.id = 'camPreview';
+camVideo.width = 320;
+camVideo.height = 180;
+camVideo.style.cssText = 'position:fixed; bottom:12px; left:12px; width:240px; height:135px; opacity:0.4; z-index:50; pointer-events:none; background:#111;';
+
+function attachVideoTexture() {
+  if (videoTexture || !material) return;
+  if (camVideo.videoWidth > 0 && camVideo.videoHeight > 0) {
+    videoTexture = new THREE.VideoTexture(camVideo);
+    videoTexture.minFilter = THREE.LinearFilter;
+    videoTexture.magFilter = THREE.LinearFilter;
+    videoTexture.format = THREE.RGBAFormat;
+    material.map = videoTexture;
+    material.needsUpdate = true;
+    console.log('Webcam texture attached', camVideo.videoWidth, camVideo.videoHeight);
+    helpText.innerText = 'Camera ready. Make a pinch to interact.';
+  }
+}
 
 // Initialize camera
 async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    helpText.innerText = 'Camera API not available in this browser.';
+    console.error('getUserMedia not available');
+    return;
+  }
+
   try {
+    console.log('Requesting webcam…');
     const s = await navigator.mediaDevices.getUserMedia({ video: { width:1280, height:720 }, audio:false });
     camVideo.srcObject = s;
+    camVideo.onplaying = attachVideoTexture;
+    camVideo.onloadeddata = attachVideoTexture;
     await camVideo.play();
-    helpText.innerText = 'Camera ready. Make a pinch to interact.';
+    attachVideoTexture();
   } catch (e) {
-    helpText.innerText = 'Camera access denied or not available.';
-    console.error(e);
+    let msg = 'Camera access denied or not available.';
+    if (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError') msg = 'Camera permission denied. Allow access and reload.';
+    if (e.name === 'NotFoundError' || e.name === 'DevicesNotFoundError') msg = 'No camera found. Connect a camera.';
+    helpText.innerText = msg;
+    console.error('getUserMedia error:', e);
   }
 }
 startCamera();
@@ -86,13 +119,11 @@ geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
 geometry.setIndex(new THREE.BufferAttribute(indices, 1));
 geometry.computeVertexNormals();
 
-// Video texture
-const videoTexture = new THREE.VideoTexture(mediaElement);
-videoTexture.minFilter = THREE.LinearFilter;
-videoTexture.magFilter = THREE.LinearFilter;
-videoTexture.format = THREE.RGBAFormat;
+// Placeholder texture until webcam is ready
+const placeholderTexture = new THREE.DataTexture(new Uint8Array([30, 30, 30, 255]), 1, 1, THREE.RGBAFormat);
+placeholderTexture.needsUpdate = true;
 
-const material = new THREE.MeshBasicMaterial({ map: videoTexture, toneMapped: false });
+const material = new THREE.MeshBasicMaterial({ map: placeholderTexture, toneMapped: false });
 const mesh = new THREE.Mesh(geometry, material);
 windowGroup.add(mesh);
 
