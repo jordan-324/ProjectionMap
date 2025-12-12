@@ -71,10 +71,13 @@ function attachVideoTexture() {
       console.log('Background texture created');
     }
     
+    // Always update background material when texture is ready
     if (backgroundMesh && backgroundTexture) {
-      backgroundMesh.material.map = backgroundTexture;
-      backgroundMesh.material.needsUpdate = true;
-      console.log('Background texture attached to mesh');
+      if (backgroundMesh.material.map !== backgroundTexture) {
+        backgroundMesh.material.map = backgroundTexture;
+        backgroundMesh.material.needsUpdate = true;
+        console.log('Background texture attached to mesh');
+      }
     }
 
     console.log('Webcam texture attached', camVideo.videoWidth, camVideo.videoHeight);
@@ -110,9 +113,10 @@ startCamera();
 
 // ============ THREE.JS SETUP ============
 const scene = new THREE.Scene();
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false }); // alpha: false so background shows
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+renderer.setClearColor(0x000000, 1); // black background
 container.appendChild(renderer.domElement);
 
 // 2D overlay for hand visualization
@@ -132,25 +136,26 @@ const light = new THREE.AmbientLight(0xffffff, 1.0);
 scene.add(light);
 
 // full-screen background plane (shows webcam)
-// Calculate size to fill viewport at camera distance
+// Calculate size to fill viewport - make it large enough to cover entire view
 const cameraDistance = 2;
 const fov = 45;
 const aspect = window.innerWidth / window.innerHeight;
 const height = 2 * Math.tan((fov * Math.PI / 180) / 2) * cameraDistance;
 const width = height * aspect;
-const bgGeo = new THREE.PlaneGeometry(width * 1.2, height * 1.2); // slightly larger to ensure coverage
-const bgPlaceholder = new THREE.DataTexture(new Uint8Array([20, 20, 20, 255]), 1, 1, THREE.RGBAFormat);
+const bgGeo = new THREE.PlaneGeometry(width * 2, height * 2); // make it larger to ensure full coverage
+const bgPlaceholder = new THREE.DataTexture(new Uint8Array([30, 30, 30, 255]), 1, 1, THREE.RGBAFormat);
 bgPlaceholder.needsUpdate = true;
 const bgMat = new THREE.MeshBasicMaterial({ 
   map: bgPlaceholder, 
   depthWrite: false,
-  side: THREE.DoubleSide // ensure it's visible from camera side
+  depthTest: false, // don't test depth, always render
+  side: THREE.DoubleSide
 });
 backgroundMesh = new THREE.Mesh(bgGeo, bgMat);
-backgroundMesh.position.set(0, 0, -1.5); // behind the overlay quad
-backgroundMesh.renderOrder = -1; // render first (behind everything)
+backgroundMesh.position.set(0, 0, 0); // at same z as the projection quad, but will render behind
+backgroundMesh.renderOrder = -999; // render first (behind everything)
 scene.add(backgroundMesh);
-console.log('Background mesh created at z=-1.5, size:', width * 1.2, 'x', height * 1.2);
+console.log('Background mesh created at z=0, size:', width * 2, 'x', height * 2);
 
 // a parent group for the projection window so we can scale/rotate as a whole (overlay)
 const windowGroup = new THREE.Group();
