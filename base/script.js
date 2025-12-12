@@ -5,6 +5,8 @@
 const mediaSrc = null; // if null, we use the webcam stream or sample fallback
 const useWebcamForTexture = true; // show live webcam inside the window by default
 const maxHands = 1; // single-hand control (can expand later)
+const pinchThreshold = 0.08; // was 0.05; higher = easier pinch detect
+const cornerPickThreshold = 0.12; // was 0.08; higher = easier to grab corners
 
 // ============ DOM ============
 const container = document.getElementById('container');
@@ -291,7 +293,7 @@ hands.onResults((results) => {
   const pinchDist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
 
   // choose a small threshold for pinching (tuned empirically)
-  const PINCH_THRESHOLD = 0.05;
+  const PINCH_THRESHOLD = pinchThreshold;
 
   // if pinching -> either scale whole window or move a corner if near one
   if (pinchDist < PINCH_THRESHOLD) {
@@ -313,8 +315,8 @@ hands.onResults((results) => {
         const d = Math.hypot(dx,dy);
         if (d < minD) { minD = d; picked = i; }
       }
-      // threshold to pick: ~0.08 in NDC
-      if (minD < 0.08) {
+      // threshold to pick
+      if (minD < cornerPickThreshold) {
         selectedCorner = picked;
         helpText.innerText = `Corner ${selectedCorner} selected`;
       } else {
