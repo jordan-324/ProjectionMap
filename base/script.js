@@ -28,6 +28,8 @@ document.body.appendChild(camVideo);
 // A separate displayMedia (the one mapped into the quad). By default we'll use camVideo as texture.
 let mediaElement = camVideo; // can be swapped to a <video> or <img> from file input
 let videoTexture = null;
+let backgroundTexture = null;
+let backgroundMesh = null;
 
 // Small on-page preview to verify the webcam feed (slightly transparent, non-interactive)
 camVideo.id = 'camPreview';
@@ -44,6 +46,19 @@ function attachVideoTexture() {
     videoTexture.format = THREE.RGBAFormat;
     material.map = videoTexture;
     material.needsUpdate = true;
+
+    // also update background
+    if (!backgroundTexture) {
+      backgroundTexture = new THREE.VideoTexture(camVideo);
+      backgroundTexture.minFilter = THREE.LinearFilter;
+      backgroundTexture.magFilter = THREE.LinearFilter;
+      backgroundTexture.format = THREE.RGBAFormat;
+    }
+    if (backgroundMesh) {
+      backgroundMesh.material.map = backgroundTexture;
+      backgroundMesh.material.needsUpdate = true;
+    }
+
     console.log('Webcam texture attached', camVideo.videoWidth, camVideo.videoHeight);
     helpText.innerText = 'Camera ready. Make a pinch to interact.';
   }
@@ -90,7 +105,16 @@ scene.add(camera);
 const light = new THREE.AmbientLight(0xffffff, 1.0);
 scene.add(light);
 
-// a parent group for the projection window so we can scale/rotate as a whole
+// full-screen background plane (shows webcam)
+const bgGeo = new THREE.PlaneGeometry(4, 3);
+const bgPlaceholder = new THREE.DataTexture(new Uint8Array([10, 10, 10, 255]), 1, 1, THREE.RGBAFormat);
+bgPlaceholder.needsUpdate = true;
+const bgMat = new THREE.MeshBasicMaterial({ map: bgPlaceholder, depthWrite: false });
+backgroundMesh = new THREE.Mesh(bgGeo, bgMat);
+backgroundMesh.position.set(0, 0, -0.6); // behind the overlay quad
+scene.add(backgroundMesh);
+
+// a parent group for the projection window so we can scale/rotate as a whole (overlay)
 const windowGroup = new THREE.Group();
 scene.add(windowGroup);
 
