@@ -5,8 +5,8 @@
 const mediaSrc = null; // if null, we use the webcam stream or sample fallback
 const useWebcamForTexture = true; // show live webcam inside the window by default
 const maxHands = 2; // allow two hands
-const pinchThreshold = 0.08; // was 0.05; higher = easier pinch detect
-const cornerPickThreshold = 0.12; // was 0.08; higher = easier to grab corners
+const cornerPickThreshold = 0.15; // higher = easier to grab corners
+const smoothingFactor = 0.15; // 0-1, higher = smoother but more lag (0.15 = smooth but responsive)
 
 // ============ DOM ============
 const container = document.getElementById('container');
@@ -176,12 +176,16 @@ windowGroup.add(mesh);
 const cornerSpheres = [];
 const cornerPositions = [0,1,2,3].map(i => new THREE.Vector3(positions[i*3+0], positions[i*3+1], positions[i*3+2]));
 const sphereGeom = new THREE.SphereGeometry(0.02, 12, 10);
-const sphereMat = new THREE.MeshBasicMaterial({ color: 0xff8800 });
+const defaultColor = 0xff8800; // orange
+const grabbedColor = 0x00ff00; // green when grabbed
 for (let i=0;i<4;i++){
+  const sphereMat = new THREE.MeshBasicMaterial({ color: defaultColor });
   const s = new THREE.Mesh(sphereGeom, sphereMat);
   s.position.copy(cornerPositions[i]);
   scene.add(s);
   cornerSpheres.push(s);
+  originalSphereColors.push(defaultColor);
+  targetCornerPositions.push(cornerPositions[i].clone());
 }
 
 // A visible outline (thin lines) to better see the quad
@@ -194,16 +198,48 @@ scene.add(outline);
 
 // ============ Interaction State ============
 let selectedCorner = -1;
-let isPinching = false;
-let pinchStartDist = null;
+let isGrabbing = false; // changed from isPinching
 let startScale = 1.0;
 let currentScale = 1.0;
+let targetCornerPositions = []; // for smoothing
+let originalSphereColors = []; // store original colors
 
 // convert normalized 0..1 hand coords (MediaPipe) to NDC (-1 .. 1)
 // Mirror hand coords horizontally to match mirrored video view
 function screenToNDC(xNorm, yNorm){
   const mirroredX = 1 - xNorm;
   return { x: mirroredX * 2 - 1, y: - (yNorm * 2 - 1) };
+}
+
+// Detect if hand is closed (fist) - checks if fingertips are close to palm
+function isHandClosed(landmarks) {
+  if (!landmarks || landmarks.length < 21) return false;
+  
+  const wrist = landmarks[0];
+  const palmCenter = landmarks[9]; // middle finger base
+  
+  // Check distances from fingertips to palm/wrist
+  const fingertips = [
+    landmarks[4],  // thumb tip
+    landmarks[8],   // index tip
+    landmarks[12],  // middle tip
+    landmarks[16],  // ring tip
+    landmarks[20]   // pinky tip
+  ];
+  
+  let closedCount = 0;
+  const threshold = 0.15; // threshold for "close to palm"
+  
+  fingertips.forEach(tip => {
+    const distToPalm = Math.hypot(tip.x - palmCenter.x, tip.y - palmCenter.y);
+    const distToWrist = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
+    if (distToPalm < threshold || distToWrist < threshold) {
+      closedCount++;
+    }
+  });
+  
+  // If 3+ fingers are closed, consider it a fist
+  return closedCount >= 3;
 }
 
 // move a corner given an ndc coordinate (casts a ray from camera into z=0 plane)
@@ -242,11 +278,16 @@ function applyCornerPositionsToGeometry(){
   geometry.computeVertexNormals();
 }
 
-// init corners to a visible rectangle
-cornerPositions[0].set(-0.6, 0.35, 0);
-cornerPositions[1].set( 0.6, 0.35, 0);
-cornerPositions[2].set(-0.6,-0.35, 0);
-cornerPositions[3].set( 0.6,-0.35, 0);
+// init corners to a visible square (proper rectangle)
+const squareSize = 0.5;
+cornerPositions[0].set(-squareSize, squareSize, 0);   // TL
+cornerPositions[1].set( squareSize, squareSize, 0);   // TR
+cornerPositions[2].set(-squareSize, -squareSize, 0); // BL
+cornerPositions[3].set( squareSize, -squareSize, 0);  // BR
+// Initialize target positions for smoothing
+for (let i=0;i<4;i++){
+  targetCornerPositions[i].copy(cornerPositions[i]);
+}
 applyCornerPositionsToGeometry();
 
 // ============ Media Loading via file input ============
@@ -306,27 +347,30 @@ hands.onResults((results) => {
 
   if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
     lastHand = null;
-    isPinching = false;
+    // Release if hand disappears
+    if (isGrabbing) {
+      isGrabbing = false;
+      if (selectedCorner >= 0) {
+        cornerSpheres[selectedCorner].material.color.setHex(originalSphereColors[selectedCorner]);
+      }
+      selectedCorner = -1;
+    }
     helpText.innerText = performanceMode ? '' : 'No hands detected. Hold up your hand to control the scene.';
     return;
   }
   lastHand = results.multiHandLandmarks[0];
 
-  // index tip (8) and thumb tip (4)
-  const indexTip = lastHand[8];
-  const thumbTip = lastHand[4];
-  const pinchDist = Math.hypot(indexTip.x - thumbTip.x, indexTip.y - thumbTip.y);
+  // Check if hand is closed (fist)
+  const handClosed = isHandClosed(lastHand);
+  const indexTip = lastHand[8]; // index fingertip for position
 
-  // choose a small threshold for pinching (tuned empirically)
-  const PINCH_THRESHOLD = pinchThreshold;
-
-  // if pinching -> either scale whole window or move a corner if near one
-  if (pinchDist < PINCH_THRESHOLD) {
-    // entering pinch
-    if (!isPinching) {
-      isPinching = true;
-      pinchStartDist = pinchDist;
+  if (handClosed) {
+    // Hand is closed (fist) - grab or hold
+    if (!isGrabbing) {
+      // Just closed hand - try to grab a corner
+      isGrabbing = true;
       startScale = currentScale;
+      
       // attempt to select a corner if the index fingertip is near any corner (in screen NDC)
       const ndc = screenToNDC(indexTip.x, indexTip.y);
       // project corners to NDC by projecting their world pos into screen
@@ -343,40 +387,43 @@ hands.onResults((results) => {
       // threshold to pick
       if (minD < cornerPickThreshold) {
         selectedCorner = picked;
-        helpText.innerText = `Corner ${selectedCorner} selected`;
+        // Change color to indicate grabbing
+        cornerSpheres[selectedCorner].material.color.setHex(grabbedColor);
+        helpText.innerText = `Corner ${selectedCorner} grabbed (close hand to hold)`;
       } else {
         selectedCorner = -1; // scale instead
-        helpText.innerText = 'Pinch (no corner) — scaling';
+        helpText.innerText = 'Fist (no corner) — scaling';
       }
     } else {
-      // already pinching - update action
-      // compute scale change if not editing corner
-      if (selectedCorner === -1) {
-        // map pinch distance difference to scale. Since pinchDist is tiny (0..~0.08), use vertical movement of index fingertip instead for scaling
-        // Use index y relative to start (we store startScale above)
-        const ndcIndex = screenToNDC(indexTip.x, indexTip.y);
-        // simpler mapping: use pinchDist delta
-        const scaleFactor = 1 + (pinchStartDist - pinchDist) * 6; // tuned multiplier
-        currentScale = Math.max(0.1, startScale * scaleFactor);
-        windowGroup.scale.set(currentScale, currentScale, currentScale);
-      } else {
-        // move selected corner to current index fingertip position
+      // Already grabbing - update position or scale
+      if (selectedCorner >= 0) {
+        // Move selected corner smoothly to current index fingertip position
         const ndc = screenToNDC(indexTip.x, indexTip.y);
         const worldPt = ndcToWorld(ndc.x, ndc.y);
-        cornerPositions[selectedCorner].copy(worldPt);
-        applyCornerPositionsToGeometry();
+        targetCornerPositions[selectedCorner].copy(worldPt);
+      } else {
+        // Scale the whole window (use vertical movement)
+        const ndcIndex = screenToNDC(indexTip.x, indexTip.y);
+        const scaleFactor = 1 + (ndcIndex.y * 0.5); // move hand up/down to scale
+        currentScale = Math.max(0.1, startScale * scaleFactor);
+        windowGroup.scale.set(currentScale, currentScale, currentScale);
       }
     }
   } else {
-    // not pinching
-    if (isPinching) {
-      // released pinch
-      isPinching = false;
+    // Hand is open - release
+    if (isGrabbing) {
+      isGrabbing = false;
+      if (selectedCorner >= 0) {
+        // Restore original color
+        cornerSpheres[selectedCorner].material.color.setHex(originalSphereColors[selectedCorner]);
+        helpText.innerText = performanceMode ? '' : 'Corner released (open hand)';
+      } else {
+        helpText.innerText = performanceMode ? '' : 'Released.';
+      }
       selectedCorner = -1;
-      helpText.innerText = performanceMode ? '' : 'Pinch released.';
     } else {
-      // idle: optionally show a cursor or pointing indicator (not implemented)
-      helpText.innerText = performanceMode ? '' : 'Ready. Pinch to interact.';
+      // idle
+      helpText.innerText = performanceMode ? '' : 'Ready. Close hand (fist) near corner to grab.';
     }
   }
 });
@@ -445,7 +492,17 @@ cameraFeed.start();
 // ============ RENDER LOOP ============
 function animate(){
   requestAnimationFrame(animate);
+  
+  // Smooth interpolation of corner positions
+  for (let i=0;i<4;i++){
+    cornerPositions[i].lerp(targetCornerPositions[i], smoothingFactor);
+  }
+  applyCornerPositionsToGeometry();
+  
   // update video texture if it's a video (Three.VideoTexture auto-updates)
+  if (videoTexture && videoTexture.image && videoTexture.image.readyState >= 2) {
+    videoTexture.needsUpdate = true;
+  }
   // render
   renderer.render(scene, camera);
 }
