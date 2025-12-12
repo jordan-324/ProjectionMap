@@ -127,12 +127,18 @@ const light = new THREE.AmbientLight(0xffffff, 1.0);
 scene.add(light);
 
 // full-screen background plane (shows webcam)
-const bgGeo = new THREE.PlaneGeometry(4, 3);
+// Calculate size to fill viewport at camera distance
+const cameraDistance = 2;
+const fov = 45;
+const aspect = window.innerWidth / window.innerHeight;
+const height = 2 * Math.tan((fov * Math.PI / 180) / 2) * cameraDistance;
+const width = height * aspect;
+const bgGeo = new THREE.PlaneGeometry(width * 1.2, height * 1.2); // slightly larger to ensure coverage
 const bgPlaceholder = new THREE.DataTexture(new Uint8Array([10, 10, 10, 255]), 1, 1, THREE.RGBAFormat);
 bgPlaceholder.needsUpdate = true;
 const bgMat = new THREE.MeshBasicMaterial({ map: bgPlaceholder, depthWrite: false });
 backgroundMesh = new THREE.Mesh(bgGeo, bgMat);
-backgroundMesh.position.set(0, 0, -0.6); // behind the overlay quad
+backgroundMesh.position.set(0, 0, -1.5); // behind the overlay quad
 scene.add(backgroundMesh);
 
 // a parent group for the projection window so we can scale/rotate as a whole (overlay)
@@ -515,6 +521,17 @@ window.addEventListener('resize', () => {
   overlayCanvas.height = window.innerHeight;
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  
+  // Update background plane size to fill viewport
+  if (backgroundMesh) {
+    const cameraDistance = 2;
+    const fov = 45;
+    const aspect = window.innerWidth / window.innerHeight;
+    const height = 2 * Math.tan((fov * Math.PI / 180) / 2) * cameraDistance;
+    const width = height * aspect;
+    backgroundMesh.geometry.dispose();
+    backgroundMesh.geometry = new THREE.PlaneGeometry(width * 1.2, height * 1.2);
+  }
 });
 
 // ============ UI Controls ============
