@@ -387,6 +387,8 @@ function drawHandsOverlay(handsLm) {
 
   handsLm.forEach((lm, idx) => {
     const color = handColors[idx % handColors.length];
+    const mapX = (x) => (1 - x) * overlayCanvas.width; // flip horizontally to match mirrored video
+    const mapY = (y) => y * overlayCanvas.height;
     // draw connections (subset)
     const connections = [
       [0,1],[1,2],[2,3],[3,4],      // thumb
@@ -403,18 +405,18 @@ function drawHandsOverlay(handsLm) {
 
     overlayCtx.beginPath();
     connections.forEach(([a,b], i) => {
-      const ax = lm[a].x * overlayCanvas.width;
-      const ay = lm[a].y * overlayCanvas.height;
-      const bx = lm[b].x * overlayCanvas.width;
-      const by = lm[b].y * overlayCanvas.height;
+      const ax = mapX(lm[a].x);
+      const ay = mapY(lm[a].y);
+      const bx = mapX(lm[b].x);
+      const by = mapY(lm[b].y);
       overlayCtx.moveTo(ax, ay);
       overlayCtx.lineTo(bx, by);
     });
     overlayCtx.stroke();
 
     lm.forEach((p) => {
-      const x = p.x * overlayCanvas.width;
-      const y = p.y * overlayCanvas.height;
+      const x = mapX(p.x);
+      const y = mapY(p.y);
       overlayCtx.beginPath();
       overlayCtx.arc(x, y, 5, 0, Math.PI * 2);
       overlayCtx.fill();
@@ -424,7 +426,7 @@ function drawHandsOverlay(handsLm) {
     const wrist = lm[0];
     overlayCtx.font = '14px system-ui';
     overlayCtx.fillStyle = color;
-    overlayCtx.fillText(`Hand ${idx+1}`, wrist.x * overlayCanvas.width + 8, wrist.y * overlayCanvas.height - 8);
+    overlayCtx.fillText(`Hand ${idx+1}`, mapX(wrist.x) + 8, mapY(wrist.y) - 8);
   });
 }
 
