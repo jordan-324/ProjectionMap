@@ -65,10 +65,41 @@ function attachVideoTexture() {
       backgroundTexture.minFilter = THREE.LinearFilter;
       backgroundTexture.magFilter = THREE.LinearFilter;
       backgroundTexture.format = THREE.RGBAFormat;
+      // Mirror texture horizontally
       backgroundTexture.wrapS = THREE.RepeatWrapping;
       backgroundTexture.repeat.x = -1;
       backgroundTexture.offset.x = 1;
       console.log('Background texture created');
+    }
+    
+    // Update background plane size to match webcam aspect ratio and fill viewport
+    if (backgroundMesh && camVideo.videoWidth > 0 && camVideo.videoHeight > 0) {
+      const webcamAspect = camVideo.videoWidth / camVideo.videoHeight; // typically 16:9 = 1.777
+      const cameraDistance = 2;
+      const fov = 45;
+      const viewportAspect = window.innerWidth / window.innerHeight;
+      
+      // Calculate viewport size at background plane (z=-1, so distance from camera is 3)
+      const distanceFromCamera = 3;
+      const viewportHeight = 2 * Math.tan((fov * Math.PI / 180) / 2) * distanceFromCamera;
+      const viewportWidth = viewportHeight * viewportAspect;
+      
+      // Size background to fill viewport while maintaining webcam aspect ratio
+      let bgWidth, bgHeight;
+      if (viewportAspect > webcamAspect) {
+        // Viewport is wider than webcam - fit to height
+        bgHeight = viewportHeight * 1.1; // slightly larger to ensure coverage
+        bgWidth = bgHeight * webcamAspect;
+      } else {
+        // Viewport is taller than webcam - fit to width
+        bgWidth = viewportWidth * 1.1;
+        bgHeight = bgWidth / webcamAspect;
+      }
+      
+      // Update geometry
+      backgroundMesh.geometry.dispose();
+      backgroundMesh.geometry = new THREE.PlaneGeometry(bgWidth, bgHeight);
+      console.log('Background resized to match webcam aspect:', bgWidth, 'x', bgHeight, 'aspect:', webcamAspect);
     }
     
     // Always update background material when texture is ready
@@ -136,13 +167,8 @@ const light = new THREE.AmbientLight(0xffffff, 1.0);
 scene.add(light);
 
 // full-screen background plane (shows webcam)
-// Calculate size to fill viewport - make it large enough to cover entire view
-const cameraDistance = 2;
-const fov = 45;
-const aspect = window.innerWidth / window.innerHeight;
-const height = 2 * Math.tan((fov * Math.PI / 180) / 2) * cameraDistance;
-const width = height * aspect;
-const bgGeo = new THREE.PlaneGeometry(width * 2, height * 2); // make it larger to ensure full coverage
+// Start with placeholder size, will be resized to match webcam aspect ratio when video loads
+const bgGeo = new THREE.PlaneGeometry(10, 10); // temporary size
 const bgPlaceholder = new THREE.DataTexture(new Uint8Array([30, 30, 30, 255]), 1, 1, THREE.RGBAFormat);
 bgPlaceholder.needsUpdate = true;
 const bgMat = new THREE.MeshBasicMaterial({ 
@@ -152,10 +178,10 @@ const bgMat = new THREE.MeshBasicMaterial({
   side: THREE.DoubleSide
 });
 backgroundMesh = new THREE.Mesh(bgGeo, bgMat);
-backgroundMesh.position.set(0, 0, 0); // at same z as the projection quad, but will render behind
+backgroundMesh.position.set(0, 0, -1); // behind the projection quad but in front of camera
 backgroundMesh.renderOrder = -999; // render first (behind everything)
 scene.add(backgroundMesh);
-console.log('Background mesh created at z=0, size:', width * 2, 'x', height * 2);
+console.log('Background mesh created at z=-1 (will resize to match webcam aspect)');
 
 // a parent group for the projection window so we can scale/rotate as a whole (overlay)
 const windowGroup = new THREE.Group();
@@ -541,15 +567,27 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   
-  // Update background plane size to fill viewport
-  if (backgroundMesh) {
+  // Update background plane size to fill viewport while maintaining aspect ratio
+  if (backgroundMesh && camVideo.videoWidth > 0 && camVideo.videoHeight > 0) {
+    const webcamAspect = camVideo.videoWidth / camVideo.videoHeight;
     const cameraDistance = 2;
     const fov = 45;
-    const aspect = window.innerWidth / window.innerHeight;
-    const height = 2 * Math.tan((fov * Math.PI / 180) / 2) * cameraDistance;
-    const width = height * aspect;
+    const viewportAspect = window.innerWidth / window.innerHeight;
+    const distanceFromCamera = 3;
+    const viewportHeight = 2 * Math.tan((fov * Math.PI / 180) / 2) * distanceFromCamera;
+    const viewportWidth = viewportHeight * viewportAspect;
+    
+    let bgWidth, bgHeight;
+    if (viewportAspect > webcamAspect) {
+      bgHeight = viewportHeight * 1.1;
+      bgWidth = bgHeight * webcamAspect;
+    } else {
+      bgWidth = viewportWidth * 1.1;
+      bgHeight = bgWidth / webcamAspect;
+    }
+    
     backgroundMesh.geometry.dispose();
-    backgroundMesh.geometry = new THREE.PlaneGeometry(width * 1.2, height * 1.2);
+    backgroundMesh.geometry = new THREE.PlaneGeometry(bgWidth, bgHeight);
   }
 });
 
