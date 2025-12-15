@@ -226,6 +226,8 @@ let selectedCorner = -1;
 let isGrabbing = false; // changed from isPinching
 let startScale = 1.0;
 let currentScale = 1.0;
+let mouseSelectedCorner = -1; // for mouse interaction
+let isMouseDragging = false;
 // Note: targetCornerPositions and originalSphereColors are declared above with corner spheres
 
 // convert normalized 0..1 hand coords (MediaPipe) to NDC (-1 .. 1)
@@ -427,11 +429,7 @@ hands.onResults((results) => {
         const worldPt = ndcToWorld(ndc.x, ndc.y);
         targetCornerPositions[selectedCorner].copy(worldPt);
       } else {
-        // Scale the whole window (use vertical movement)
-        const ndcIndex = screenToNDC(indexTip.x, indexTip.y);
-        const scaleFactor = 1 + (ndcIndex.y * 0.5); // move hand up/down to scale
-        currentScale = Math.max(0.1, startScale * scaleFactor);
-        windowGroup.scale.set(currentScale, currentScale, currentScale);
+        // No corner selected: do nothing (disable hand-based scaling)
       }
     }
   } else {
@@ -552,6 +550,138 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
   
   // Background size is fixed - no need to resize on window resize
+});
+
+// ============ MOUSE INTERACTION ============
+// Convert mouse coordinates to NDC
+function mouseToNDC(mouseX, mouseY) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  const x = ((mouseX - rect.left) / rect.width) * 2 - 1;
+  const y = -((mouseY - rect.top) / rect.height) * 2 + 1;
+  return { x, y };
+}
+
+// Find nearest corner to mouse position
+function findNearestCorner(ndcX, ndcY) {
+  let nearest = -1;
+  let minDist = Infinity;
+  const pickThreshold = 0.1; // NDC units
+  
+  for (let i = 0; i < 4; i++) {
+    const cp = cornerPositions[i].clone();
+    cp.project(camera);
+    const dx = cp.x - ndcX;
+    const dy = cp.y - ndcY;
+    const dist = Math.hypot(dx, dy);
+    if (dist < minDist && dist < pickThreshold) {
+      minDist = dist;
+      nearest = i;
+    }
+  }
+  return nearest;
+}
+
+// Mouse down - select corner
+renderer.domElement.addEventListener('mousedown', (e) => {
+  const ndc = mouseToNDC(e.clientX, e.clientY);
+  const corner = findNearestCorner(ndc.x, ndc.y);
+  
+  if (corner >= 0) {
+    mouseSelectedCorner = corner;
+    isMouseDragging = true;
+    // Change color to indicate selection
+    cornerSpheres[corner].material.color.setHex(grabbedColor);
+    e.preventDefault();
+  }
+});
+
+// Mouse move - drag corner or show hover
+let hoveredCorner = -1;
+renderer.domElement.addEventListener('mousemove', (e) => {
+  const ndc = mouseToNDC(e.clientX, e.clientY);
+  
+  if (isMouseDragging && mouseSelectedCorner >= 0) {
+    // Dragging
+    const worldPt = ndcToWorld(ndc.x, ndc.y);
+    targetCornerPositions[mouseSelectedCorner].copy(worldPt);
+    e.preventDefault();
+  } else {
+    // Hover detection
+    const corner = findNearestCorner(ndc.x, ndc.y);
+    if (corner !== hoveredCorner) {
+      // Reset previous hover
+      if (hoveredCorner >= 0 && hoveredCorner !== mouseSelectedCorner) {
+        cornerSpheres[hoveredCorner].material.color.setHex(originalSphereColors[hoveredCorner]);
+      }
+      // Set new hover
+      hoveredCorner = corner;
+      if (hoveredCorner >= 0 && hoveredCorner !== mouseSelectedCorner) {
+        // Lighten the color on hover
+        cornerSpheres[hoveredCorner].material.color.setHex(0xffaa00); // lighter orange
+      }
+    }
+  }
+});
+
+// Mouse up - release corner
+renderer.domElement.addEventListener('mouseup', (e) => {
+  if (isMouseDragging && mouseSelectedCorner >= 0) {
+    // Restore original color
+    cornerSpheres[mouseSelectedCorner].material.color.setHex(originalSphereColors[mouseSelectedCorner]);
+    mouseSelectedCorner = -1;
+    isMouseDragging = false;
+    hoveredCorner = -1;
+    e.preventDefault();
+  }
+});
+
+// Mouse leave - release if dragging
+renderer.domElement.addEventListener('mouseleave', (e) => {
+  if (isMouseDragging && mouseSelectedCorner >= 0) {
+    cornerSpheres[mouseSelectedCorner].material.color.setHex(originalSphereColors[mouseSelectedCorner]);
+    mouseSelectedCorner = -1;
+    isMouseDragging = false;
+  }
+  // Reset hover
+  if (hoveredCorner >= 0) {
+    cornerSpheres[hoveredCorner].material.color.setHex(originalSphereColors[hoveredCorner]);
+    hoveredCorner = -1;
+  }
+});
+
+// Touch support for mobile
+renderer.domElement.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 1) {
+    const touch = e.touches[0];
+    const ndc = mouseToNDC(touch.clientX, touch.clientY);
+    const corner = findNearestCorner(ndc.x, ndc.y);
+    
+    if (corner >= 0) {
+      mouseSelectedCorner = corner;
+      isMouseDragging = true;
+      cornerSpheres[corner].material.color.setHex(grabbedColor);
+      e.preventDefault();
+    }
+  }
+});
+
+renderer.domElement.addEventListener('touchmove', (e) => {
+  if (isMouseDragging && mouseSelectedCorner >= 0 && e.touches.length === 1) {
+    const touch = e.touches[0];
+    const ndc = mouseToNDC(touch.clientX, touch.clientY);
+    const worldPt = ndcToWorld(ndc.x, ndc.y);
+    targetCornerPositions[mouseSelectedCorner].copy(worldPt);
+    e.preventDefault();
+  }
+});
+
+renderer.domElement.addEventListener('touchend', (e) => {
+  if (isMouseDragging && mouseSelectedCorner >= 0) {
+    cornerSpheres[mouseSelectedCorner].material.color.setHex(originalSphereColors[mouseSelectedCorner]);
+    mouseSelectedCorner = -1;
+    isMouseDragging = false;
+    e.preventDefault();
+  }
 });
 
 // ============ UI Controls ============
