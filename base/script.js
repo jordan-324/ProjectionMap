@@ -78,9 +78,9 @@ function attachVideoTexture() {
       const fov = 45;
       const viewportAspect = window.innerWidth / window.innerHeight;
       
-      // Calculate viewport size at z=-0.5 (where background is positioned)
-      // Camera is at z=2, background at z=-0.5, so distance is 2.5
-      const distanceFromCamera = 2.5;
+      // Calculate viewport size at z=-1 (where background is positioned)
+      // Camera is at z=2, background at z=-1, so distance is 3
+      const distanceFromCamera = 3;
       const viewportHeight = 2 * Math.tan((fov * Math.PI / 180) / 2) * distanceFromCamera;
       const viewportWidth = viewportHeight * viewportAspect;
       
@@ -106,6 +106,10 @@ function attachVideoTexture() {
     if (backgroundMesh && backgroundTexture) {
       backgroundMesh.material.map = backgroundTexture;
       backgroundMesh.material.needsUpdate = true;
+      // Force update the texture
+      if (backgroundTexture.image && backgroundTexture.image.readyState >= 2) {
+        backgroundTexture.needsUpdate = true;
+      }
       console.log('Background texture attached to mesh, video dimensions:', camVideo.videoWidth, 'x', camVideo.videoHeight);
     }
 
@@ -177,14 +181,14 @@ bgPlaceholder.needsUpdate = true;
 const bgMat = new THREE.MeshBasicMaterial({ 
   map: bgPlaceholder, 
   depthWrite: false,
-  depthTest: true, // enable depth test
-  side: THREE.FrontSide
+  depthTest: false, // disable depth test so it always renders
+  side: THREE.DoubleSide // both sides visible
 });
 backgroundMesh = new THREE.Mesh(bgGeo, bgMat);
-backgroundMesh.position.set(0, 0, -0.5); // slightly behind projection quad
+backgroundMesh.position.set(0, 0, -1); // further back to ensure visibility
 backgroundMesh.renderOrder = -999; // render first (behind everything)
 scene.add(backgroundMesh);
-console.log('Background mesh created at z=-0.5, initial size:', (viewportWidth * 1.2).toFixed(2), 'x', (viewportHeight * 1.2).toFixed(2));
+console.log('Background mesh created at z=-1, initial size:', (viewportWidth * 1.2).toFixed(2), 'x', (viewportHeight * 1.2).toFixed(2));
 
 // a parent group for the projection window so we can scale/rotate as a whole (overlay)
 const windowGroup = new THREE.Group();
@@ -590,7 +594,7 @@ window.addEventListener('resize', () => {
     const webcamAspect = camVideo.videoWidth / camVideo.videoHeight;
     const fov = 45;
     const viewportAspect = window.innerWidth / window.innerHeight;
-    const distanceFromCamera = 2.5; // camera at z=2, background at z=-0.5
+    const distanceFromCamera = 3; // camera at z=2, background at z=-1
     const viewportHeight = 2 * Math.tan((fov * Math.PI / 180) / 2) * distanceFromCamera;
     const viewportWidth = viewportHeight * viewportAspect;
     
