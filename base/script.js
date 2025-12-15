@@ -5,8 +5,8 @@
 const mediaSrc = null; // if null, we use the webcam stream or sample fallback
 const useWebcamForTexture = true; // show live webcam inside the window by default
 const maxHands = 2; // allow two hands
-const cornerPickThreshold = 0.15; // higher = easier to grab corners
-const smoothingFactor = 0.15; // 0-1, higher = smoother but more lag (0.15 = smooth but responsive)
+const cornerPickThreshold = 0.2; // higher = easier to grab corners
+const smoothingFactor = 0.1; // 0-1, higher = smoother but more lag (0.1 = responsive)
 
 // ============ DOM ============
 const container = document.getElementById('container');
@@ -193,7 +193,7 @@ windowGroup.add(mesh);
 // Helpers: corner markers (small spheres) and lines between them
 const cornerSpheres = [];
 const cornerPositions = [0,1,2,3].map(i => new THREE.Vector3(positions[i*3+0], positions[i*3+1], positions[i*3+2]));
-const sphereGeom = new THREE.SphereGeometry(0.03, 12, 10); // slightly larger for visibility
+const sphereGeom = new THREE.SphereGeometry(0.04, 12, 10); // larger for easier grabbing/hover
 const defaultColor = 0xff8800; // orange
 const grabbedColor = 0x00ff00; // green when grabbed
 
@@ -254,7 +254,7 @@ function isHandClosed(landmarks) {
   ];
   
   let closedCount = 0;
-  const threshold = 0.15; // threshold for "close to palm"
+  const threshold = 0.18; // looser threshold for easier grab detection
   
   fingertips.forEach(tip => {
     const distToPalm = Math.hypot(tip.x - palmCenter.x, tip.y - palmCenter.y);
@@ -264,8 +264,8 @@ function isHandClosed(landmarks) {
     }
   });
   
-  // If 3+ fingers are closed, consider it a fist
-  return closedCount >= 3;
+  // If 2+ fingers are closed, consider it a fist (more permissive)
+  return closedCount >= 2;
 }
 
 // move a corner given an ndc coordinate (casts a ray from camera into z=0 plane)
@@ -565,7 +565,7 @@ function mouseToNDC(mouseX, mouseY) {
 function findNearestCorner(ndcX, ndcY) {
   let nearest = -1;
   let minDist = Infinity;
-  const pickThreshold = 0.1; // NDC units
+  const pickThreshold = 0.15; // NDC units, more generous for easier grabbing
   
   for (let i = 0; i < 4; i++) {
     const cp = cornerPositions[i].clone();
