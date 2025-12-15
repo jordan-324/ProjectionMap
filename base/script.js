@@ -104,11 +104,9 @@ function attachVideoTexture() {
     
     // Always update background material when texture is ready
     if (backgroundMesh && backgroundTexture) {
-      if (backgroundMesh.material.map !== backgroundTexture) {
-        backgroundMesh.material.map = backgroundTexture;
-        backgroundMesh.material.needsUpdate = true;
-        console.log('Background texture attached to mesh');
-      }
+      backgroundMesh.material.map = backgroundTexture;
+      backgroundMesh.material.needsUpdate = true;
+      console.log('Background texture attached to mesh, video dimensions:', camVideo.videoWidth, 'x', camVideo.videoHeight);
     }
 
     console.log('Webcam texture attached', camVideo.videoWidth, camVideo.videoHeight);
@@ -144,10 +142,10 @@ startCamera();
 
 // ============ THREE.JS SETUP ============
 const scene = new THREE.Scene();
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false }); // alpha: false so background shows
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); // alpha: true to see background mesh
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
-renderer.setClearColor(0x000000, 1); // black background
+renderer.setClearColor(0x000000, 0); // transparent so we see the background mesh
 container.appendChild(renderer.domElement);
 
 // 2D overlay for hand visualization
@@ -179,8 +177,8 @@ bgPlaceholder.needsUpdate = true;
 const bgMat = new THREE.MeshBasicMaterial({ 
   map: bgPlaceholder, 
   depthWrite: false,
-  depthTest: false, // don't test depth, always render
-  side: THREE.DoubleSide
+  depthTest: true, // enable depth test
+  side: THREE.FrontSide
 });
 backgroundMesh = new THREE.Mesh(bgGeo, bgMat);
 backgroundMesh.position.set(0, 0, -0.5); // slightly behind projection quad
@@ -232,6 +230,11 @@ const cornerPositions = [0,1,2,3].map(i => new THREE.Vector3(positions[i*3+0], p
 const sphereGeom = new THREE.SphereGeometry(0.03, 12, 10); // slightly larger for visibility
 const defaultColor = 0xff8800; // orange
 const grabbedColor = 0x00ff00; // green when grabbed
+
+// Initialize arrays before using them
+let originalSphereColors = []; // store original colors
+let targetCornerPositions = []; // for smoothing
+
 for (let i=0;i<4;i++){
   const sphereMat = new THREE.MeshBasicMaterial({ color: defaultColor });
   const s = new THREE.Mesh(sphereGeom, sphereMat);
@@ -257,8 +260,7 @@ let selectedCorner = -1;
 let isGrabbing = false; // changed from isPinching
 let startScale = 1.0;
 let currentScale = 1.0;
-let targetCornerPositions = []; // for smoothing
-let originalSphereColors = []; // store original colors
+// Note: targetCornerPositions and originalSphereColors are declared above with corner spheres
 
 // convert normalized 0..1 hand coords (MediaPipe) to NDC (-1 .. 1)
 // Mirror hand coords horizontally to match mirrored video view
@@ -334,8 +336,8 @@ function applyCornerPositionsToGeometry(){
   geometry.computeVertexNormals();
 }
 
-// init corners to a visible square (proper rectangle)
-const squareSize = 0.5;
+// init corners to a visible square (proper rectangle) - make it larger and more visible
+const squareSize = 0.8; // increased from 0.5 to make it more visible
 cornerPositions[0].set(-squareSize, squareSize, 0);   // TL
 cornerPositions[1].set( squareSize, squareSize, 0);   // TR
 cornerPositions[2].set(-squareSize, -squareSize, 0); // BL
@@ -345,6 +347,7 @@ for (let i=0;i<4;i++){
   targetCornerPositions[i].copy(cornerPositions[i]);
 }
 applyCornerPositionsToGeometry();
+console.log('Projection quad initialized with corners at ±', squareSize);
 
 // ============ Media Loading via file input ============
 mediaFileInput.addEventListener('change', (ev) => {
@@ -559,8 +562,15 @@ function animate(){
   if (videoTexture && videoTexture.image && videoTexture.image.readyState >= 2) {
     videoTexture.needsUpdate = true;
   }
-  if (backgroundTexture && backgroundTexture.image && backgroundTexture.image.readyState >= 2) {
-    backgroundTexture.needsUpdate = true;
+  if (backgroundTexture && backgroundTexture.image) {
+    if (backgroundTexture.image.readyState >= 2) {
+      backgroundTexture.needsUpdate = true;
+    }
+    // Ensure background mesh has the texture
+    if (backgroundMesh && backgroundMesh.material.map !== backgroundTexture) {
+      backgroundMesh.material.map = backgroundTexture;
+      backgroundMesh.material.needsUpdate = true;
+    }
   }
   // render
   renderer.render(scene, camera);
