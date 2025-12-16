@@ -65,7 +65,6 @@ function attachVideoTexture() {
       backgroundTexture.minFilter = THREE.LinearFilter;
       backgroundTexture.magFilter = THREE.LinearFilter;
       backgroundTexture.format = THREE.RGBAFormat;
-      backgroundTexture.flipY = false; // Don't flip Y
       // Mirror texture horizontally
       backgroundTexture.wrapS = THREE.RepeatWrapping;
       backgroundTexture.repeat.x = -1;
@@ -182,14 +181,6 @@ geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
 geometry.setIndex(new THREE.BufferAttribute(indices, 1));
 geometry.computeVertexNormals();
 
-// Store original bounds for UV warping calculation
-let originalBounds = {
-  minX: -0.8,
-  maxX: 0.8,
-  minY: -0.8,
-  maxY: 0.8
-};
-
 // Placeholder texture until webcam is ready
 const placeholderTexture = new THREE.DataTexture(new Uint8Array([30, 30, 30, 255]), 1, 1, THREE.RGBAFormat);
 placeholderTexture.needsUpdate = true;
@@ -216,7 +207,7 @@ for (let i=0;i<4;i++){
   const s = new THREE.Mesh(sphereGeom, sphereMat);
   s.position.copy(cornerPositions[i]);
   s.renderOrder = 2; // render on top
-  windowGroup.add(s); // Add to windowGroup so it scales with the mesh
+  scene.add(s);
   cornerSpheres.push(s);
   originalSphereColors.push(defaultColor);
   targetCornerPositions.push(cornerPositions[i].clone());
@@ -235,7 +226,7 @@ const initialLinePos = new Float32Array([
 lineGeom.setAttribute('position', new THREE.BufferAttribute(initialLinePos, 3));
 const outline = new THREE.LineLoop(lineGeom, outlineMat); // LineLoop automatically connects last to first
 outline.renderOrder = 2; // render on top
-windowGroup.add(outline); // Add to windowGroup so it scales with the mesh
+scene.add(outline);
 
 // ============ Interaction State ============
 let mouseSelectedCorner = -1; // for mouse interaction
@@ -245,82 +236,14 @@ let startDragZ = 0; // original z position when drag starts
 
 // Hand gesture state
 let leftHandPinching = false;
-let scrollModeActive = false; // Pinch enables scroll mode
-let startHandY = 0; // Initial hand Y position when scroll mode starts
-let startTextureOffsetX = 0; // Initial texture offset when scroll starts
-let currentTextureOffsetX = 0; // Current texture offset (for panning left/right)
-let targetTextureOffsetX = 0; // Target texture offset
-const texturePanSmoothing = 0.15; // Smoothing factor for texture panning
-const texturePanSensitivity = 2.0; // How sensitive the Y-axis movement is for panning
-
-// Scale state (no longer controlled by hand, but kept for compatibility)
+let rightHandPinching = false;
+let startPinchDistance = 0;
+let startScale = 1.0;
 let currentScale = 1.0;
-let targetScale = 1.0;
-
-// Right hand rotation state (palm orientation controls image orientation)
-let rightHandActive = false;
-let startRotationX = 0; // Pitch (forward/back tilt)
-let startRotationZ = 0; // Roll (left/right tilt)
-let currentRotationX = 0;
-let currentRotationZ = 0;
-let targetRotationX = 0;
-let targetRotationZ = 0;
-const rotationSmoothing = 0.2; // Smoothing factor for rotation
-const rotationSensitivity = 1.5; // How sensitive the palm orientation is for rotation
-
-// Compute palm orientation and check if palm is facing camera
-function computePalmOrientation(landmarks) {
-  if (!landmarks || landmarks.length < 21) return null;
-  
-  // Key points for palm orientation
-  const wrist = landmarks[0];
-  const indexMCP = landmarks[5];  // Index finger MCP (base)
-  const pinkyMCP = landmarks[17]; // Pinky MCP (base)
-  const middleMCP = landmarks[9]; // Middle MCP
-  
-  // Create vectors from wrist to finger bases
-  const v1 = new THREE.Vector3(
-    indexMCP.x - wrist.x,
-    indexMCP.y - wrist.y,
-    indexMCP.z - wrist.z
-  );
-  const v2 = new THREE.Vector3(
-    pinkyMCP.x - wrist.x,
-    pinkyMCP.y - wrist.y,
-    pinkyMCP.z - wrist.z
-  );
-  
-  // Compute palm normal using cross product
-  const normal = new THREE.Vector3().crossVectors(v1, v2).normalize();
-  
-  // If normal is invalid (zero length), use alternative calculation
-  if (normal.length() < 0.01) {
-    const v3 = new THREE.Vector3(
-      middleMCP.x - wrist.x,
-      middleMCP.y - wrist.y,
-      middleMCP.z - wrist.z
-    );
-    normal.crossVectors(v1, v3).normalize();
-  }
-  
-  // Check if palm is facing camera (normal should point toward camera, i.e., positive Z)
-  // In MediaPipe coordinates, camera is at positive Z, so palm facing camera means normal.z > 0
-  const isPalmFacing = normal.z > 0.3; // Threshold to ensure palm is facing camera
-  
-  if (!isPalmFacing) return null;
-  
-  // Convert normal to pitch (X-axis rotation) and roll (Z-axis rotation)
-  // Pitch: forward/back tilt (rotation around X-axis)
-  // Roll: left/right tilt (rotation around Z-axis)
-  
-  // Pitch: based on Y component of normal (up/down tilt)
-  const pitch = Math.asin(-normal.y); // Negative because up should be positive pitch
-  
-  // Roll: based on X component of normal (left/right tilt)
-  const roll = Math.atan2(normal.x, Math.sqrt(normal.y * normal.y + normal.z * normal.z));
-  
-  return { pitch, roll, normal };
-}
+let targetScale = 1.0; // For smooth interpolation
+let startRotation = 0;
+let currentRotation = 0;
+const scaleSmoothing = 0.15; // Smoothing factor for scale (lower = smoother, more lag)
 
 // Note: targetCornerPositions and originalSphereColors are declared above with corner spheres
 
@@ -339,8 +262,7 @@ function getPinchDistance(landmarks) {
   return Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y, thumbTip.z - indexTip.z);
 }
 
-// More permissive pinch detection - allows for natural finger movement
-function isPinching(landmarks, threshold = 0.08) {
+function isPinching(landmarks, threshold = 0.05) {
   return getPinchDistance(landmarks) < threshold;
 }
 
@@ -358,7 +280,6 @@ function ndcToWorld(xNdc, yNdc, depthZ = 0){
 }
 
 // Simple triangulation for polygon (fan from first vertex)
-// UV mapping for free transform effect - texture follows corner positions
 function updateGeometryForPolygon() {
   const numCorners = cornerPositions.length;
   if (numCorners < 3) return; // Need at least 3 corners
@@ -367,49 +288,13 @@ function updateGeometryForPolygon() {
   const newPositions = new Float32Array(numCorners * 3);
   const newUVs = new Float32Array(numCorners * 2);
   
-  // Free transform UV mapping: map corners directly to fixed UV coordinates
-  // This creates a perspective-like distortion where texture follows the shape
-  // Order: TL, TR, BR, BL (clockwise)
-  // UV coordinates in Three.js: (0,0) = bottom-left, (1,1) = top-right
-  const standardUVs = [
-    [0, 1],  // TL (top-left in world) -> top-left of texture
-    [1, 1],  // TR (top-right in world) -> top-right of texture
-    [1, 0],  // BR (bottom-right in world) -> bottom-right of texture
-    [0, 0]   // BL (bottom-left in world) -> bottom-left of texture
-  ];
-  
   for (let i = 0; i < numCorners; i++) {
     newPositions[i*3+0] = cornerPositions[i].x;
     newPositions[i*3+1] = cornerPositions[i].y;
     newPositions[i*3+2] = cornerPositions[i].z;
-    
-    // For first 4 corners, use standard free transform UV mapping
-    if (i < 4) {
-      newUVs[i*2+0] = standardUVs[i][0];
-      newUVs[i*2+1] = standardUVs[i][1];
-    } else {
-      // For additional corners, calculate UV based on position relative to bounds
-      // This allows new corners to also participate in the distortion
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      for (let j = 0; j < numCorners; j++) {
-        minX = Math.min(minX, cornerPositions[j].x);
-        maxX = Math.max(maxX, cornerPositions[j].x);
-        minY = Math.min(minY, cornerPositions[j].y);
-        maxY = Math.max(maxY, cornerPositions[j].y);
-      }
-      const rangeX = maxX - minX;
-      const rangeY = maxY - minY;
-      
-      if (rangeX > 0 && rangeY > 0) {
-        // Map to UV space based on current bounds
-        newUVs[i*2+0] = (cornerPositions[i].x - minX) / rangeX;
-        newUVs[i*2+1] = 1.0 - (cornerPositions[i].y - minY) / rangeY; // Flip Y
-      } else {
-        // Fallback
-        newUVs[i*2+0] = (cornerPositions[i].x + 1) / 2;
-        newUVs[i*2+1] = (cornerPositions[i].y + 1) / 2;
-      }
-    }
+    // Simple UV mapping
+    newUVs[i*2+0] = (cornerPositions[i].x + 1) / 2;
+    newUVs[i*2+1] = (cornerPositions[i].y + 1) / 2;
   }
   
   // Create indices for triangulation (fan from vertex 0)
@@ -462,7 +347,7 @@ function addCorner(worldPos) {
   s.position.copy(newPos);
   s.renderOrder = 2;
   s.userData.cornerIndex = cornerPositions.length - 1; // Store index for deletion
-  windowGroup.add(s); // Add to windowGroup so it scales with the mesh
+  scene.add(s);
   cornerSpheres.push(s);
   originalSphereColors.push(defaultColor);
   
@@ -482,9 +367,9 @@ function removeCorner(index) {
   targetCornerPositions.splice(index, 1);
   originalSphereColors.splice(index, 1);
   
-  // Remove sphere from windowGroup
+  // Remove sphere from scene
   const sphere = cornerSpheres[index];
-  windowGroup.remove(sphere);
+  scene.remove(sphere);
   sphere.geometry.dispose();
   sphere.material.dispose();
   cornerSpheres.splice(index, 1);
@@ -505,15 +390,6 @@ cornerPositions[0].set(-squareSize, squareSize, 0);   // TL
 cornerPositions[1].set( squareSize, squareSize, 0);   // TR
 cornerPositions[2].set( squareSize, -squareSize, 0);  // BR
 cornerPositions[3].set(-squareSize, -squareSize, 0);  // BL
-
-// Update original bounds to match initial square for UV warping
-originalBounds = {
-  minX: -squareSize,
-  maxX: squareSize,
-  minY: -squareSize,
-  maxY: squareSize
-};
-
 // Initialize target positions for smoothing
 for (let i=0;i<4;i++){
   targetCornerPositions[i].copy(cornerPositions[i]);
@@ -576,15 +452,18 @@ hands.onResults((results) => {
   drawHandsOverlay(allHands);
 
   if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-    // Release pinch if hand disappears
+    // Release pinches if hands disappear
     if (leftHandPinching) {
       leftHandPinching = false;
     }
-    helpText.innerText = performanceMode ? '' : 'No hands detected. Pinch with left hand to scale.';
+    if (rightHandPinching) {
+      rightHandPinching = false;
+    }
+    helpText.innerText = performanceMode ? '' : 'No hands detected. Pinch with left hand to scale, right hand to rotate.';
     return;
   }
 
-  // Find left and right hands
+  // Separate left and right hands
   let leftHand = null;
   let rightHand = null;
   
@@ -597,117 +476,92 @@ hands.onResults((results) => {
     }
   });
 
-  // If only one hand detected, assign based on position (left side = left hand, right side = right hand)
+  // If only one hand detected, use it (MediaPipe may not always detect handedness correctly)
   if (!leftHand && !rightHand && results.multiHandLandmarks.length > 0) {
-    const hand = results.multiHandLandmarks[0];
-    const wristX = hand[0].x; // Wrist X position (0-1, where 0.5 is center)
-    if (wristX < 0.5) {
-      leftHand = hand;
-    } else {
-      rightHand = hand;
-    }
-  } else if (!leftHand && results.multiHandLandmarks.length > 0) {
-    // If we have a right hand but no left, and there's another hand, use it as left
-    const otherHand = results.multiHandLandmarks.find((h, idx) => 
-      results.multiHandedness?.[idx]?.label !== 'Right'
-    );
-    if (otherHand) leftHand = otherHand;
+    // Default: first hand is left if only one detected
+    leftHand = results.multiHandLandmarks[0];
   }
 
-  // LEFT HAND: Pinch enables scroll mode, then whole hand Y position pans texture left/right
+  // LEFT HAND: Pinch to scale
   if (leftHand) {
     const leftPinching = isPinching(leftHand);
     
-    // Get hand Y position (use wrist as reference point)
-    const wrist = leftHand[0];
-    const currentHandY = wrist.y;
-    
     if (leftPinching && !leftHandPinching) {
-      // Pinch detected - engage scroll mode
+      // Just started pinching - initialize scale
       leftHandPinching = true;
-      scrollModeActive = true;
-      startHandY = currentHandY; // Store initial hand Y position
-      startTextureOffsetX = currentTextureOffsetX;
-      targetTextureOffsetX = currentTextureOffsetX; // Sync target with current
-    } else if (leftPinching && leftHandPinching && scrollModeActive) {
-      // Continue in scroll mode - pan texture left/right based on Y position
-      // Calculate Y delta (in MediaPipe coords: 0 = top, 1 = bottom)
-      // Hand up (smaller Y) = pan left (negative offset)
-      // Hand down (larger Y) = pan right (positive offset)
-      const yDelta = currentHandY - startHandY;
-      
-      // Pan texture: Y movement controls X offset (left/right panning)
-      const panDelta = yDelta * texturePanSensitivity; // Positive Y = right, negative Y = left
-      targetTextureOffsetX = startTextureOffsetX + panDelta;
-      
-      // Clamp texture offset to reasonable range (can pan within texture bounds)
-      targetTextureOffsetX = Math.max(-1.0, Math.min(1.0, targetTextureOffsetX));
-      
-      // Target offset is set, smoothing will happen in render loop
+      startPinchDistance = getPinchDistance(leftHand);
+      startScale = currentScale;
+    } else if (leftPinching && leftHandPinching) {
+      // Continue pinching - update scale
+      const currentPinchDistance = getPinchDistance(leftHand);
+      const scaleDelta = startPinchDistance / currentPinchDistance; // inverse: closer = larger scale
+      currentScale = startScale * scaleDelta;
+      // Clamp scale to reasonable range
+      currentScale = Math.max(0.1, Math.min(5.0, currentScale));
     } else if (!leftPinching && leftHandPinching) {
-      // Released pinch - exit scroll mode
+      // Released pinch
       leftHandPinching = false;
-      scrollModeActive = false;
-      targetTextureOffsetX = currentTextureOffsetX; // Lock current offset
     }
   } else {
     // Left hand disappeared
-    if (leftHandPinching || scrollModeActive) {
+    if (leftHandPinching) {
       leftHandPinching = false;
-      scrollModeActive = false;
-      targetTextureOffsetX = currentTextureOffsetX;
     }
   }
 
-  // RIGHT HAND: Palm orientation controls image orientation (only when palm faces camera)
+  // RIGHT HAND: Pinch to rotate
   if (rightHand) {
-    const orientation = computePalmOrientation(rightHand);
+    const rightPinching = isPinching(rightHand);
     
-    if (orientation) {
-      // Palm is facing camera - use orientation for rotation
-      if (!rightHandActive) {
-        // Just detected palm facing camera - initialize rotation
-        rightHandActive = true;
-        startRotationX = currentRotationX;
-        startRotationZ = currentRotationZ;
-        targetRotationX = currentRotationX;
-        targetRotationZ = currentRotationZ;
-      } else {
-        // Continue tracking - update rotation based on palm orientation
-        // Pitch (forward/back tilt) -> X-axis rotation
-        // Roll (left/right tilt) -> Z-axis rotation
-        targetRotationX = orientation.pitch * rotationSensitivity;
-        targetRotationZ = orientation.roll * rotationSensitivity;
-        
-        // Clamp rotations to reasonable range
-        targetRotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetRotationX));
-        targetRotationZ = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetRotationZ));
+    if (rightPinching && !rightHandPinching) {
+      // Just started pinching - initialize rotation
+      rightHandPinching = true;
+      startPinchDistance = getPinchDistance(rightHand);
+      startRotation = currentRotation;
+      // Store initial angle for relative rotation
+      const thumbTip = rightHand[4];
+      const indexTip = rightHand[8];
+      const pinchCenterX = (thumbTip.x + indexTip.x) / 2;
+      const pinchCenterY = (thumbTip.y + indexTip.y) / 2;
+      const wrist = rightHand[0];
+      window._rightHandStartAngle = Math.atan2(pinchCenterY - wrist.y, pinchCenterX - wrist.x);
+    } else if (rightPinching && rightHandPinching) {
+      // Continue pinching - update rotation based on pinch center movement
+      const thumbTip = rightHand[4];
+      const indexTip = rightHand[8];
+      const pinchCenterX = (thumbTip.x + indexTip.x) / 2;
+      const pinchCenterY = (thumbTip.y + indexTip.y) / 2;
+      const wrist = rightHand[0];
+      
+      // Calculate angle from wrist to pinch center
+      const angle = Math.atan2(pinchCenterY - wrist.y, pinchCenterX - wrist.x);
+      
+      // Calculate relative rotation from start
+      if (window._rightHandStartAngle !== undefined) {
+        const angleDelta = angle - window._rightHandStartAngle;
+        // Convert to degrees and apply sensitivity
+        currentRotation = startRotation + (angleDelta * 180 / Math.PI) * 3;
       }
-    } else {
-      // Palm not facing camera - deactivate
-      if (rightHandActive) {
-        rightHandActive = false;
-        targetRotationX = currentRotationX; // Lock current rotations
-        targetRotationZ = currentRotationZ;
-      }
+    } else if (!rightPinching && rightHandPinching) {
+      // Released pinch
+      rightHandPinching = false;
+      window._rightHandStartAngle = undefined; // Reset angle reference
     }
   } else {
     // Right hand disappeared
-    if (rightHandActive) {
-      rightHandActive = false;
-      targetRotationX = currentRotationX;
-      targetRotationZ = currentRotationZ;
+    if (rightHandPinching) {
+      rightHandPinching = false;
     }
   }
 
   // Update help text
   if (!performanceMode) {
     if (leftHandPinching) {
-      helpText.innerText = `Panning: ${currentTextureOffsetX.toFixed(2)}`;
-    } else if (rightHandActive) {
-      helpText.innerText = `Rotating: Pitch ${(currentRotationX * 180 / Math.PI).toFixed(1)}°, Roll ${(currentRotationZ * 180 / Math.PI).toFixed(1)}°`;
+      helpText.innerText = `Scaling: ${currentScale.toFixed(2)}x`;
+    } else if (rightHandPinching) {
+      helpText.innerText = `Rotating: ${currentRotation.toFixed(1)}°`;
     } else {
-      helpText.innerText = 'Left hand: Y-axis for panning. Right hand: X-axis for rotation.';
+      helpText.innerText = 'Pinch with left hand to scale, right hand to rotate. Use mouse to move corners.';
     }
   }
 });
@@ -784,37 +638,9 @@ function animate(){
   }
   applyCornerPositionsToGeometry();
   
-  // Smooth interpolation of texture offset for panning
-  if (leftHandPinching && scrollModeActive) {
-    // When actively panning, use faster interpolation for responsiveness
-    currentTextureOffsetX = currentTextureOffsetX + (targetTextureOffsetX - currentTextureOffsetX) * (1 - texturePanSmoothing);
-  } else {
-    // When not panning, smoothly settle to target
-    currentTextureOffsetX = currentTextureOffsetX + (targetTextureOffsetX - currentTextureOffsetX) * 0.1;
-  }
-  
-  // Apply texture offset to pan the texture left/right
-  if (videoTexture && material && material.map === videoTexture) {
-    // Update texture offset (X-axis for left/right panning)
-    // Note: videoTexture already has offset.x = 1 for mirroring, so we add to that
-    videoTexture.offset.x = 1 + currentTextureOffsetX;
-  }
-  
-  // Smooth rotation interpolation (pitch and roll from palm orientation)
-  if (rightHandActive) {
-    // When actively rotating, use faster interpolation for responsiveness
-    currentRotationX = currentRotationX + (targetRotationX - currentRotationX) * (1 - rotationSmoothing);
-    currentRotationZ = currentRotationZ + (targetRotationZ - currentRotationZ) * (1 - rotationSmoothing);
-  } else {
-    // When not rotating, smoothly settle to target
-    currentRotationX = currentRotationX + (targetRotationX - currentRotationX) * 0.1;
-    currentRotationZ = currentRotationZ + (targetRotationZ - currentRotationZ) * 0.1;
-  }
-  
   // Apply scale and rotation to windowGroup (origami-like transformation)
   windowGroup.scale.set(currentScale, currentScale, currentScale);
-  windowGroup.rotation.x = currentRotationX; // Pitch (forward/back tilt)
-  windowGroup.rotation.z = currentRotationZ; // Roll (left/right tilt)
+  windowGroup.rotation.z = currentRotation * Math.PI / 180; // Convert degrees to radians
   
   // update video textures if they're videos (Three.VideoTexture auto-updates)
   if (videoTexture && videoTexture.image && videoTexture.image.readyState >= 2) {
