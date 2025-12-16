@@ -5,7 +5,6 @@
 const mediaSrc = null; // if null, we use the webcam stream or sample fallback
 const useWebcamForTexture = true; // show live webcam inside the window by default
 const maxHands = 2; // allow two hands
-const cornerPickThreshold = 0.2; // higher = easier to grab corners
 const smoothingFactor = 0.1; // 0-1, higher = smoother but more lag (0.1 = responsive)
 
 // ============ DOM ============
@@ -230,14 +229,20 @@ outline.renderOrder = 2; // render on top
 scene.add(outline);
 
 // ============ Interaction State ============
-let selectedCorner = -1;
-let isGrabbing = false; // changed from isPinching
-let startScale = 1.0;
-let currentScale = 1.0;
 let mouseSelectedCorner = -1; // for mouse interaction
 let isMouseDragging = false;
 let depthOffset = 0; // for depth control with mouse wheel
 let startDragZ = 0; // original z position when drag starts
+
+// Hand gesture state
+let leftHandPinching = false;
+let rightHandPinching = false;
+let startPinchDistance = 0;
+let startScale = 1.0;
+let currentScale = 1.0;
+let startRotation = 0;
+let currentRotation = 0;
+
 // Note: targetCornerPositions and originalSphereColors are declared above with corner spheres
 
 // convert normalized 0..1 hand coords (MediaPipe) to NDC (-1 .. 1)
@@ -247,35 +252,16 @@ function screenToNDC(xNorm, yNorm){
   return { x: mirroredX * 2 - 1, y: - (yNorm * 2 - 1) };
 }
 
-// Detect if hand is closed (fist) - checks if fingertips are close to palm
-function isHandClosed(landmarks) {
-  if (!landmarks || landmarks.length < 21) return false;
-  
-  const wrist = landmarks[0];
-  const palmCenter = landmarks[9]; // middle finger base
-  
-  // Check distances from fingertips to palm/wrist
-  const fingertips = [
-    landmarks[4],  // thumb tip
-    landmarks[8],   // index tip
-    landmarks[12],  // middle tip
-    landmarks[16],  // ring tip
-    landmarks[20]   // pinky tip
-  ];
-  
-  let closedCount = 0;
-  const threshold = 0.18; // looser threshold for easier grab detection
-  
-  fingertips.forEach(tip => {
-    const distToPalm = Math.hypot(tip.x - palmCenter.x, tip.y - palmCenter.y);
-    const distToWrist = Math.hypot(tip.x - wrist.x, tip.y - wrist.y);
-    if (distToPalm < threshold || distToWrist < threshold) {
-      closedCount++;
-    }
-  });
-  
-  // If 2+ fingers are closed, consider it a fist (more permissive)
-  return closedCount >= 2;
+// Detect pinch gesture (thumb and index finger close together)
+function getPinchDistance(landmarks) {
+  if (!landmarks || landmarks.length < 21) return Infinity;
+  const thumbTip = landmarks[4];
+  const indexTip = landmarks[8];
+  return Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y, thumbTip.z - indexTip.z);
+}
+
+function isPinching(landmarks, threshold = 0.05) {
+  return getPinchDistance(landmarks) < threshold;
 }
 
 // move a corner given an ndc coordinate - supports depth control
@@ -457,7 +443,6 @@ hands.setOptions({
   minTrackingConfidence: 0.6
 });
 
-let lastHand = null;
 let allHands = [];
 
 hands.onResults((results) => {
@@ -465,83 +450,116 @@ hands.onResults((results) => {
   drawHandsOverlay(allHands);
 
   if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-    lastHand = null;
-    // Release if hand disappears
-    if (isGrabbing) {
-      isGrabbing = false;
-      if (selectedCorner >= 0) {
-        cornerSpheres[selectedCorner].material.color.setHex(originalSphereColors[selectedCorner]);
-      }
-      selectedCorner = -1;
+    // Release pinches if hands disappear
+    if (leftHandPinching) {
+      leftHandPinching = false;
     }
-    helpText.innerText = performanceMode ? '' : 'No hands detected. Hold up your hand to control the scene.';
+    if (rightHandPinching) {
+      rightHandPinching = false;
+    }
+    helpText.innerText = performanceMode ? '' : 'No hands detected. Pinch with left hand to scale, right hand to rotate.';
     return;
   }
-  lastHand = results.multiHandLandmarks[0];
 
-  // Check if hand is closed (fist)
-  const handClosed = isHandClosed(lastHand);
-  const indexTip = lastHand[8]; // index fingertip for position
+  // Separate left and right hands
+  let leftHand = null;
+  let rightHand = null;
+  
+  results.multiHandLandmarks.forEach((landmarks, idx) => {
+    const handedness = results.multiHandedness?.[idx]?.label;
+    if (handedness === 'Left') {
+      leftHand = landmarks;
+    } else if (handedness === 'Right') {
+      rightHand = landmarks;
+    }
+  });
 
-  if (handClosed) {
-    // Hand is closed (fist) - grab or hold
-    if (!isGrabbing) {
-      // Just closed hand - try to grab a corner
-      isGrabbing = true;
+  // If only one hand detected, use it (MediaPipe may not always detect handedness correctly)
+  if (!leftHand && !rightHand && results.multiHandLandmarks.length > 0) {
+    // Default: first hand is left if only one detected
+    leftHand = results.multiHandLandmarks[0];
+  }
+
+  // LEFT HAND: Pinch to scale
+  if (leftHand) {
+    const leftPinching = isPinching(leftHand);
+    
+    if (leftPinching && !leftHandPinching) {
+      // Just started pinching - initialize scale
+      leftHandPinching = true;
+      startPinchDistance = getPinchDistance(leftHand);
       startScale = currentScale;
-      
-      // attempt to select a corner if the index fingertip is near any corner (in screen NDC)
-      const ndc = screenToNDC(indexTip.x, indexTip.y);
-      // project corners to NDC by projecting their world pos into screen
-      let picked = -1;
-      let minD = 999;
-      for (let i=0;i<4;i++){
-        const cp = cornerPositions[i].clone();
-        cp.project(camera);
-        const dx = cp.x - ndc.x;
-        const dy = cp.y - ndc.y;
-        const d = Math.hypot(dx,dy);
-        if (d < minD) { minD = d; picked = i; }
-      }
-      // threshold to pick
-      if (minD < cornerPickThreshold) {
-        selectedCorner = picked;
-        // Change color to indicate grabbing
-        cornerSpheres[selectedCorner].material.color.setHex(grabbedColor);
-        helpText.innerText = `Corner ${selectedCorner} grabbed (close hand to hold)`;
-      } else {
-        selectedCorner = -1; // scale instead
-        helpText.innerText = 'Fist (no corner) — scaling';
-      }
-    } else {
-      // Already grabbing - update position or scale
-      if (selectedCorner >= 0) {
-        // Move selected corner smoothly to current index fingertip position
-        // Preserve the current z position (depth) when moving with hand
-        const currentZ = targetCornerPositions[selectedCorner].z;
-        const ndc = screenToNDC(indexTip.x, indexTip.y);
-        const worldPt = ndcToWorld(ndc.x, ndc.y, currentZ);
-        targetCornerPositions[selectedCorner].copy(worldPt);
-        targetCornerPositions[selectedCorner].z = currentZ; // Preserve depth
-      } else {
-        // No corner selected: do nothing (disable hand-based scaling)
-      }
+    } else if (leftPinching && leftHandPinching) {
+      // Continue pinching - update scale
+      const currentPinchDistance = getPinchDistance(leftHand);
+      const scaleDelta = startPinchDistance / currentPinchDistance; // inverse: closer = larger scale
+      currentScale = startScale * scaleDelta;
+      // Clamp scale to reasonable range
+      currentScale = Math.max(0.1, Math.min(5.0, currentScale));
+    } else if (!leftPinching && leftHandPinching) {
+      // Released pinch
+      leftHandPinching = false;
     }
   } else {
-    // Hand is open - release
-    if (isGrabbing) {
-      isGrabbing = false;
-      if (selectedCorner >= 0) {
-        // Restore original color
-        cornerSpheres[selectedCorner].material.color.setHex(originalSphereColors[selectedCorner]);
-        helpText.innerText = performanceMode ? '' : 'Corner released (open hand)';
-      } else {
-        helpText.innerText = performanceMode ? '' : 'Released.';
+    // Left hand disappeared
+    if (leftHandPinching) {
+      leftHandPinching = false;
+    }
+  }
+
+  // RIGHT HAND: Pinch to rotate
+  if (rightHand) {
+    const rightPinching = isPinching(rightHand);
+    
+    if (rightPinching && !rightHandPinching) {
+      // Just started pinching - initialize rotation
+      rightHandPinching = true;
+      startPinchDistance = getPinchDistance(rightHand);
+      startRotation = currentRotation;
+      // Store initial angle for relative rotation
+      const thumbTip = rightHand[4];
+      const indexTip = rightHand[8];
+      const pinchCenterX = (thumbTip.x + indexTip.x) / 2;
+      const pinchCenterY = (thumbTip.y + indexTip.y) / 2;
+      const wrist = rightHand[0];
+      window._rightHandStartAngle = Math.atan2(pinchCenterY - wrist.y, pinchCenterX - wrist.x);
+    } else if (rightPinching && rightHandPinching) {
+      // Continue pinching - update rotation based on pinch center movement
+      const thumbTip = rightHand[4];
+      const indexTip = rightHand[8];
+      const pinchCenterX = (thumbTip.x + indexTip.x) / 2;
+      const pinchCenterY = (thumbTip.y + indexTip.y) / 2;
+      const wrist = rightHand[0];
+      
+      // Calculate angle from wrist to pinch center
+      const angle = Math.atan2(pinchCenterY - wrist.y, pinchCenterX - wrist.x);
+      
+      // Calculate relative rotation from start
+      if (window._rightHandStartAngle !== undefined) {
+        const angleDelta = angle - window._rightHandStartAngle;
+        // Convert to degrees and apply sensitivity
+        currentRotation = startRotation + (angleDelta * 180 / Math.PI) * 3;
       }
-      selectedCorner = -1;
+    } else if (!rightPinching && rightHandPinching) {
+      // Released pinch
+      rightHandPinching = false;
+      window._rightHandStartAngle = undefined; // Reset angle reference
+    }
+  } else {
+    // Right hand disappeared
+    if (rightHandPinching) {
+      rightHandPinching = false;
+    }
+  }
+
+  // Update help text
+  if (!performanceMode) {
+    if (leftHandPinching) {
+      helpText.innerText = `Scaling: ${currentScale.toFixed(2)}x`;
+    } else if (rightHandPinching) {
+      helpText.innerText = `Rotating: ${currentRotation.toFixed(1)}°`;
     } else {
-      // idle
-      helpText.innerText = performanceMode ? '' : 'Ready. Close hand (fist) near corner to grab.';
+      helpText.innerText = 'Pinch with left hand to scale, right hand to rotate. Use mouse to move corners.';
     }
   }
 });
@@ -617,6 +635,10 @@ function animate(){
     cornerPositions[i].lerp(targetCornerPositions[i], smoothingFactor);
   }
   applyCornerPositionsToGeometry();
+  
+  // Apply scale and rotation to windowGroup (origami-like transformation)
+  windowGroup.scale.set(currentScale, currentScale, currentScale);
+  windowGroup.rotation.z = currentRotation * Math.PI / 180; // Convert degrees to radians
   
   // update video textures if they're videos (Three.VideoTexture auto-updates)
   if (videoTexture && videoTexture.image && videoTexture.image.readyState >= 2) {
@@ -773,13 +795,29 @@ function handleMouseLeave(e) {
 
 renderer.domElement.addEventListener('mouseleave', handleMouseLeave);
 
-// Mouse wheel for depth control when dragging
+// Mouse wheel / trackpad two-finger scroll for depth control when dragging
+// The 'wheel' event works for both mouse wheels and trackpad gestures
 renderer.domElement.addEventListener('wheel', (e) => {
   if (isMouseDragging && mouseSelectedCorner >= 0) {
     e.preventDefault();
-    // Adjust depth based on wheel delta
-    const depthSpeed = 0.1;
-    depthOffset += e.deltaY * depthSpeed * 0.01; // Negative deltaY = scroll up = move forward
+    
+    // Detect trackpad vs mouse wheel
+    // Trackpads: deltaMode === 0 (pixels), typically smaller, smoother deltas
+    // Mouse wheels: deltaMode === 1 (lines) or 2 (pages), larger discrete jumps
+    const isTrackpad = e.deltaMode === 0; // Pixel-based scrolling (trackpad)
+    const isMouseWheel = e.deltaMode === 1 || e.deltaMode === 2; // Line/page-based (mouse)
+    
+    // Adjust sensitivity based on input type
+    let depthDelta;
+    if (isTrackpad) {
+      // Trackpad: more sensitive, smooth scrolling
+      depthDelta = e.deltaY * 0.002; // Trackpads have smaller pixel deltas
+    } else {
+      // Mouse wheel: less sensitive per event (but larger deltas)
+      depthDelta = e.deltaY * 0.01; // Mouse wheels have larger deltas
+    }
+    
+    depthOffset += depthDelta;
     // Clamp depth to reasonable range
     depthOffset = Math.max(-2, Math.min(2, depthOffset));
     
