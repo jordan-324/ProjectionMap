@@ -11,10 +11,6 @@ const smoothingFactor = 0.1; // 0-1, higher = smoother but more lag (0.1 = respo
 const container = document.getElementById('container');
 const helpText = document.getElementById('helpText');
 const togglePerformanceBtn = document.getElementById('togglePerformance');
-const saveLayoutBtn = document.getElementById('saveLayout');
-const loadBtn = document.getElementById('loadBtn');
-const layoutFile = document.getElementById('layoutFile');
-const mediaFileInput = document.getElementById('mediaFile');
 const menuToggle = document.getElementById('menuToggle');
 const toggleIcon = document.getElementById('toggleIcon');
 const controlsPanel = document.getElementById('controls');
@@ -406,40 +402,6 @@ applyCornerPositionsToGeometry();
 console.log('Projection quad initialized with corners at ±', squareSize);
 
 // ============ Media Loading via file input ============
-mediaFileInput.addEventListener('change', (ev) => {
-  const f = ev.target.files[0];
-  if (!f) return;
-  const url = URL.createObjectURL(f);
-  if (f.type.startsWith('image/')) {
-    const img = document.createElement('img');
-    img.src = url;
-    img.onload = () => {
-      // swap mediaElement to image, but Three.VideoTexture expects video; instead use THREE.Texture on image
-      const tex = new THREE.Texture(img);
-      tex.needsUpdate = true;
-      material.map = tex;
-      material.needsUpdate = true;
-      helpText.innerText = 'Image loaded. Map corners and go to Performance Mode.';
-    };
-  } else if (f.type.startsWith('video/')) {
-    const vid = document.createElement('video');
-    vid.src = url;
-    vid.muted = true;
-    vid.loop = true;
-    vid.autoplay = true;
-    vid.playsInline = true;
-    vid.style.display = 'none';
-    document.body.appendChild(vid);
-    vid.onloadeddata = () => {
-      vid.play();
-      const tex = new THREE.VideoTexture(vid);
-      tex.minFilter = THREE.LinearFilter;
-      material.map = tex;
-      material.needsUpdate = true;
-      helpText.innerText = 'Video loaded. Map corners and go to Performance Mode.';
-    };
-  }
-});
 
 // ============ MEDIA PIPE (Hands) SETUP ============
 const hands = new Hands({
@@ -1053,50 +1015,6 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Save layout -> JSON
-saveLayoutBtn.addEventListener('click', () => {
-  const layout = {
-    corners: cornerPositions.map(p => ({ x: p.x, y: p.y, z: p.z })),
-    scale: currentScale
-  };
-  const blob = new Blob([JSON.stringify(layout, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = 'layout.json'; a.click();
-  URL.revokeObjectURL(url);
-});
-
-// load layout file
-loadBtn.addEventListener('click', () => layoutFile.click());
-layoutFile.addEventListener('change', (ev) => {
-  const file = ev.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    try {
-      const layout = JSON.parse(reader.result);
-      if (layout.corners && layout.corners.length === 4) {
-        for (let i=0;i<4;i++){
-          cornerPositions[i].set(layout.corners[i].x, layout.corners[i].y, layout.corners[i].z);
-        }
-        currentScale = layout.scale || 1.0;
-        windowGroup.scale.set(currentScale, currentScale, currentScale);
-        applyCornerPositionsToGeometry();
-        helpText.innerText = 'Layout loaded';
-      } else {
-        helpText.innerText = 'Invalid layout file';
-      }
-    } catch (err) {
-      helpText.innerText = 'Error reading layout file';
-    }
-  };
-  reader.readAsText(file);
-});
-
-// simple helper to swap to a different media source (file)
-mediaFileInput.addEventListener('change', (e) => {
-  // handled above; this listener just clarifies that it's set up
-});
 
 // ============ NOTES / FUTURE IMPROVEMENTS ============
 /*
