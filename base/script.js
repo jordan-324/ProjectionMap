@@ -247,11 +247,15 @@ let startDragZ = 0; // original z position when drag starts
 let leftHandPinching = false;
 let scrollModeActive = false; // Pinch enables scroll mode
 let startHandY = 0; // Initial hand Y position when scroll mode starts
-let startScale = 1.0;
+let startTextureOffsetX = 0; // Initial texture offset when scroll starts
+let currentTextureOffsetX = 0; // Current texture offset (for panning left/right)
+let targetTextureOffsetX = 0; // Target texture offset
+const texturePanSmoothing = 0.15; // Smoothing factor for texture panning
+const texturePanSensitivity = 2.0; // How sensitive the Y-axis movement is for panning
+
+// Scale state (no longer controlled by hand, but kept for compatibility)
 let currentScale = 1.0;
-let targetScale = 1.0; // For smooth interpolation
-const scaleSmoothing = 0.15; // Smoothing factor for scale (lower = smoother, more lag)
-const scaleSensitivity = 3.0; // How sensitive the Y-axis movement is for scaling
+let targetScale = 1.0;
 
 // Right hand rotation state (Y-axis rotation for left/right)
 let rightHandActive = false;
@@ -554,7 +558,7 @@ hands.onResults((results) => {
     if (otherHand) leftHand = otherHand;
   }
 
-  // LEFT HAND: Pinch enables scroll mode, then whole hand Y position controls scale
+  // LEFT HAND: Pinch enables scroll mode, then whole hand Y position pans texture left/right
   if (leftHand) {
     const leftPinching = isPinching(leftHand);
     
@@ -567,36 +571,35 @@ hands.onResults((results) => {
       leftHandPinching = true;
       scrollModeActive = true;
       startHandY = currentHandY; // Store initial hand Y position
-      startScale = currentScale;
-      targetScale = currentScale; // Sync target with current
+      startTextureOffsetX = currentTextureOffsetX;
+      targetTextureOffsetX = currentTextureOffsetX; // Sync target with current
     } else if (leftPinching && leftHandPinching && scrollModeActive) {
-      // Continue in scroll mode - scale based on whole hand Y position
+      // Continue in scroll mode - pan texture left/right based on Y position
       // Calculate Y delta (in MediaPipe coords: 0 = top, 1 = bottom)
-      // So moving hand up = smaller Y value, moving down = larger Y value
+      // Hand up (smaller Y) = pan left (negative offset)
+      // Hand down (larger Y) = pan right (positive offset)
       const yDelta = currentHandY - startHandY;
       
-      // Scale based on Y movement: 
-      // Hand up (smaller Y, negative delta) = larger scale
-      // Hand down (larger Y, positive delta) = smaller scale
-      const scaleDelta = -yDelta * scaleSensitivity; // Invert because up should increase scale
-      targetScale = startScale + scaleDelta;
+      // Pan texture: Y movement controls X offset (left/right panning)
+      const panDelta = yDelta * texturePanSensitivity; // Positive Y = right, negative Y = left
+      targetTextureOffsetX = startTextureOffsetX + panDelta;
       
-      // Clamp scale to reasonable range
-      targetScale = Math.max(0.1, Math.min(5.0, targetScale));
+      // Clamp texture offset to reasonable range (can pan within texture bounds)
+      targetTextureOffsetX = Math.max(-1.0, Math.min(1.0, targetTextureOffsetX));
       
-      // Target scale is set, smoothing will happen in render loop for smooth interpolation
+      // Target offset is set, smoothing will happen in render loop
     } else if (!leftPinching && leftHandPinching) {
       // Released pinch - exit scroll mode
       leftHandPinching = false;
       scrollModeActive = false;
-      targetScale = currentScale; // Lock current scale
+      targetTextureOffsetX = currentTextureOffsetX; // Lock current offset
     }
   } else {
     // Left hand disappeared
     if (leftHandPinching || scrollModeActive) {
       leftHandPinching = false;
       scrollModeActive = false;
-      targetScale = currentScale;
+      targetTextureOffsetX = currentTextureOffsetX;
     }
   }
 
@@ -632,11 +635,11 @@ hands.onResults((results) => {
   // Update help text
   if (!performanceMode) {
     if (leftHandPinching) {
-      helpText.innerText = `Scaling: ${currentScale.toFixed(2)}x`;
+      helpText.innerText = `Panning: ${currentTextureOffsetX.toFixed(2)}`;
     } else if (rightHandActive) {
       helpText.innerText = `Rotating: ${(currentRotationY * 180 / Math.PI).toFixed(1)}°`;
     } else {
-      helpText.innerText = 'Left hand: Y-axis for scale. Right hand: X-axis for rotation.';
+      helpText.innerText = 'Left hand: Y-axis for panning. Right hand: X-axis for rotation.';
     }
   }
 });
@@ -713,13 +716,20 @@ function animate(){
   }
   applyCornerPositionsToGeometry();
   
-  // Smooth interpolation of scale for pinch gestures (TouchDesigner-style smoothness)
-  if (leftHandPinching) {
-    // When actively pinching, use faster interpolation for responsiveness
-    currentScale = currentScale + (targetScale - currentScale) * (1 - scaleSmoothing);
+  // Smooth interpolation of texture offset for panning
+  if (leftHandPinching && scrollModeActive) {
+    // When actively panning, use faster interpolation for responsiveness
+    currentTextureOffsetX = currentTextureOffsetX + (targetTextureOffsetX - currentTextureOffsetX) * (1 - texturePanSmoothing);
   } else {
-    // When not pinching, smoothly settle to target
-    currentScale = currentScale + (targetScale - currentScale) * 0.1;
+    // When not panning, smoothly settle to target
+    currentTextureOffsetX = currentTextureOffsetX + (targetTextureOffsetX - currentTextureOffsetX) * 0.1;
+  }
+  
+  // Apply texture offset to pan the texture left/right
+  if (videoTexture && material && material.map === videoTexture) {
+    // Update texture offset (X-axis for left/right panning)
+    // Note: videoTexture already has offset.x = 1 for mirroring, so we add to that
+    videoTexture.offset.x = 1 + currentTextureOffsetX;
   }
   
   // Smooth rotation interpolation (Y-axis for left/right)
