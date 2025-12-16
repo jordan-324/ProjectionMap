@@ -236,14 +236,22 @@ let startDragZ = 0; // original z position when drag starts
 
 // Hand gesture state
 let leftHandPinching = false;
-let rightHandPinching = false;
-let startPinchDistance = 0;
+let leftScrollModeActive = false; // Pinch enables scroll mode for scale
+let startHandY = 0; // Initial hand Y position when scroll mode starts
 let startScale = 1.0;
 let currentScale = 1.0;
 let targetScale = 1.0; // For smooth interpolation
-let startRotation = 0;
-let currentRotation = 0;
 const scaleSmoothing = 0.15; // Smoothing factor for scale (lower = smoother, more lag)
+const scaleSensitivity = 3.0; // How sensitive the Y-axis movement is for scaling
+
+let rightHandPinching = false;
+let rightScrollModeActive = false; // Pinch enables scroll mode for panning
+let startHandX = 0; // Initial hand X position when scroll mode starts
+let startTextureOffsetX = 0; // Initial texture offset when scroll starts
+let currentTextureOffsetX = 0; // Current texture offset (for panning left/right)
+let targetTextureOffsetX = 0; // Target texture offset
+const texturePanSmoothing = 0.15; // Smoothing factor for texture panning
+const texturePanSensitivity = 2.0; // How sensitive the X-axis movement is for panning
 
 // Note: targetCornerPositions and originalSphereColors are declared above with corner spheres
 
@@ -482,75 +490,94 @@ hands.onResults((results) => {
     leftHand = results.multiHandLandmarks[0];
   }
 
-  // LEFT HAND: Pinch to scale
+  // LEFT HAND: Pinch enables scroll mode, then Y-axis controls scale
   if (leftHand) {
     const leftPinching = isPinching(leftHand);
     
+    // Get hand Y position (use wrist as reference point)
+    const wrist = leftHand[0];
+    const currentHandY = wrist.y;
+    
     if (leftPinching && !leftHandPinching) {
-      // Just started pinching - initialize scale
+      // Pinch detected - engage scroll mode
       leftHandPinching = true;
-      startPinchDistance = getPinchDistance(leftHand);
+      leftScrollModeActive = true;
+      startHandY = currentHandY; // Store initial hand Y position
       startScale = currentScale;
-    } else if (leftPinching && leftHandPinching) {
-      // Continue pinching - update scale
-      const currentPinchDistance = getPinchDistance(leftHand);
-      const scaleDelta = startPinchDistance / currentPinchDistance; // inverse: closer = larger scale
-      currentScale = startScale * scaleDelta;
+      targetScale = currentScale; // Sync target with current
+    } else if (leftPinching && leftHandPinching && leftScrollModeActive) {
+      // Continue in scroll mode - scale based on whole hand Y position
+      // Calculate Y delta (in MediaPipe coords: 0 = top, 1 = bottom)
+      // So moving hand up = smaller Y value, moving down = larger Y value
+      const yDelta = currentHandY - startHandY;
+      
+      // Scale based on Y movement: 
+      // Hand up (smaller Y, negative delta) = larger scale
+      // Hand down (larger Y, positive delta) = smaller scale
+      const scaleDelta = -yDelta * scaleSensitivity; // Invert because up should increase scale
+      targetScale = startScale + scaleDelta;
+      
       // Clamp scale to reasonable range
-      currentScale = Math.max(0.1, Math.min(5.0, currentScale));
+      targetScale = Math.max(0.1, Math.min(5.0, targetScale));
+      
+      // Target scale is set, smoothing will happen in render loop
     } else if (!leftPinching && leftHandPinching) {
-      // Released pinch
+      // Released pinch - exit scroll mode
       leftHandPinching = false;
+      leftScrollModeActive = false;
+      targetScale = currentScale; // Lock current scale
     }
   } else {
     // Left hand disappeared
-    if (leftHandPinching) {
+    if (leftHandPinching || leftScrollModeActive) {
       leftHandPinching = false;
+      leftScrollModeActive = false;
+      targetScale = currentScale;
     }
   }
 
-  // RIGHT HAND: Pinch to rotate
+  // RIGHT HAND: Pinch enables scroll mode, then X-axis controls texture panning (left/right)
   if (rightHand) {
     const rightPinching = isPinching(rightHand);
     
+    // Get hand X position (use wrist as reference point)
+    const wrist = rightHand[0];
+    const currentHandX = wrist.x; // X position in normalized coordinates (0-1)
+    
     if (rightPinching && !rightHandPinching) {
-      // Just started pinching - initialize rotation
+      // Pinch detected - engage scroll mode
       rightHandPinching = true;
-      startPinchDistance = getPinchDistance(rightHand);
-      startRotation = currentRotation;
-      // Store initial angle for relative rotation
-      const thumbTip = rightHand[4];
-      const indexTip = rightHand[8];
-      const pinchCenterX = (thumbTip.x + indexTip.x) / 2;
-      const pinchCenterY = (thumbTip.y + indexTip.y) / 2;
-      const wrist = rightHand[0];
-      window._rightHandStartAngle = Math.atan2(pinchCenterY - wrist.y, pinchCenterX - wrist.x);
-    } else if (rightPinching && rightHandPinching) {
-      // Continue pinching - update rotation based on pinch center movement
-      const thumbTip = rightHand[4];
-      const indexTip = rightHand[8];
-      const pinchCenterX = (thumbTip.x + indexTip.x) / 2;
-      const pinchCenterY = (thumbTip.y + indexTip.y) / 2;
-      const wrist = rightHand[0];
+      rightScrollModeActive = true;
+      startHandX = currentHandX; // Store initial hand X position
+      startTextureOffsetX = currentTextureOffsetX;
+      targetTextureOffsetX = currentTextureOffsetX; // Sync target with current
+    } else if (rightPinching && rightHandPinching && rightScrollModeActive) {
+      // Continue in scroll mode - pan texture left/right based on X position
+      // Calculate X delta (in MediaPipe coords: 0 = left, 1 = right)
+      const xDelta = currentHandX - startHandX;
       
-      // Calculate angle from wrist to pinch center
-      const angle = Math.atan2(pinchCenterY - wrist.y, pinchCenterX - wrist.x);
+      // Pan texture: X movement controls X offset (left/right panning)
+      // Hand left (smaller X, negative delta) = pan left (negative offset)
+      // Hand right (larger X, positive delta) = pan right (positive offset)
+      const panDelta = xDelta * texturePanSensitivity;
+      targetTextureOffsetX = startTextureOffsetX + panDelta;
       
-      // Calculate relative rotation from start
-      if (window._rightHandStartAngle !== undefined) {
-        const angleDelta = angle - window._rightHandStartAngle;
-        // Convert to degrees and apply sensitivity
-        currentRotation = startRotation + (angleDelta * 180 / Math.PI) * 3;
-      }
+      // Clamp texture offset to reasonable range (can pan within texture bounds)
+      targetTextureOffsetX = Math.max(-1.0, Math.min(1.0, targetTextureOffsetX));
+      
+      // Target offset is set, smoothing will happen in render loop
     } else if (!rightPinching && rightHandPinching) {
-      // Released pinch
+      // Released pinch - exit scroll mode
       rightHandPinching = false;
-      window._rightHandStartAngle = undefined; // Reset angle reference
+      rightScrollModeActive = false;
+      targetTextureOffsetX = currentTextureOffsetX; // Lock current offset
     }
   } else {
     // Right hand disappeared
-    if (rightHandPinching) {
+    if (rightHandPinching || rightScrollModeActive) {
       rightHandPinching = false;
+      rightScrollModeActive = false;
+      targetTextureOffsetX = currentTextureOffsetX;
     }
   }
 
@@ -559,9 +586,9 @@ hands.onResults((results) => {
     if (leftHandPinching) {
       helpText.innerText = `Scaling: ${currentScale.toFixed(2)}x`;
     } else if (rightHandPinching) {
-      helpText.innerText = `Rotating: ${currentRotation.toFixed(1)}°`;
+      helpText.innerText = `Panning: ${currentTextureOffsetX.toFixed(2)}`;
     } else {
-      helpText.innerText = 'Pinch with left hand to scale, right hand to rotate. Use mouse to move corners.';
+      helpText.innerText = 'Left hand: Pinch + Y-axis for scale. Right hand: Pinch + X-axis for panning.';
     }
   }
 });
@@ -638,9 +665,33 @@ function animate(){
   }
   applyCornerPositionsToGeometry();
   
-  // Apply scale and rotation to windowGroup (origami-like transformation)
+  // Smooth interpolation of scale for pinch gestures
+  if (leftHandPinching && leftScrollModeActive) {
+    // When actively pinching, use faster interpolation for responsiveness
+    currentScale = currentScale + (targetScale - currentScale) * (1 - scaleSmoothing);
+  } else {
+    // When not pinching, smoothly settle to target
+    currentScale = currentScale + (targetScale - currentScale) * 0.1;
+  }
+  
+  // Smooth interpolation of texture offset for panning
+  if (rightHandPinching && rightScrollModeActive) {
+    // When actively panning, use faster interpolation for responsiveness
+    currentTextureOffsetX = currentTextureOffsetX + (targetTextureOffsetX - currentTextureOffsetX) * (1 - texturePanSmoothing);
+  } else {
+    // When not panning, smoothly settle to target
+    currentTextureOffsetX = currentTextureOffsetX + (targetTextureOffsetX - currentTextureOffsetX) * 0.1;
+  }
+  
+  // Apply texture offset to pan the texture left/right
+  if (videoTexture && material && material.map === videoTexture) {
+    // Update texture offset (X-axis for left/right panning)
+    // Note: videoTexture already has offset.x = 1 for mirroring, so we add to that
+    videoTexture.offset.x = 1 + currentTextureOffsetX;
+  }
+  
+  // Apply scale to windowGroup (origami-like transformation)
   windowGroup.scale.set(currentScale, currentScale, currentScale);
-  windowGroup.rotation.z = currentRotation * Math.PI / 180; // Convert degrees to radians
   
   // update video textures if they're videos (Three.VideoTexture auto-updates)
   if (videoTexture && videoTexture.image && videoTexture.image.readyState >= 2) {
