@@ -65,6 +65,7 @@ function attachVideoTexture() {
       backgroundTexture.minFilter = THREE.LinearFilter;
       backgroundTexture.magFilter = THREE.LinearFilter;
       backgroundTexture.format = THREE.RGBAFormat;
+      backgroundTexture.flipY = false; // Don't flip Y
       // Mirror texture horizontally
       backgroundTexture.wrapS = THREE.RepeatWrapping;
       backgroundTexture.repeat.x = -1;
@@ -288,7 +289,7 @@ function ndcToWorld(xNdc, yNdc, depthZ = 0){
 }
 
 // Simple triangulation for polygon (fan from first vertex)
-// UV mapping warps with geometry - uses fixed UVs so texture warps naturally
+// UV mapping for free transform effect - texture follows corner positions
 function updateGeometryForPolygon() {
   const numCorners = cornerPositions.length;
   if (numCorners < 3) return; // Need at least 3 corners
@@ -297,41 +298,48 @@ function updateGeometryForPolygon() {
   const newPositions = new Float32Array(numCorners * 3);
   const newUVs = new Float32Array(numCorners * 2);
   
-  // Calculate current bounds for UV mapping
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (let i = 0; i < numCorners; i++) {
-    minX = Math.min(minX, cornerPositions[i].x);
-    maxX = Math.max(maxX, cornerPositions[i].x);
-    minY = Math.min(minY, cornerPositions[i].y);
-    maxY = Math.max(maxY, cornerPositions[i].y);
-  }
+  // Free transform UV mapping: map corners directly to fixed UV coordinates
+  // This creates a perspective-like distortion where texture follows the shape
+  // Order: TL, TR, BR, BL (clockwise)
+  // UV coordinates in Three.js: (0,0) = bottom-left, (1,1) = top-right
+  const standardUVs = [
+    [0, 1],  // TL (top-left in world) -> top-left of texture
+    [1, 1],  // TR (top-right in world) -> top-right of texture
+    [1, 0],  // BR (bottom-right in world) -> bottom-right of texture
+    [0, 0]   // BL (bottom-left in world) -> bottom-left of texture
+  ];
   
-  const rangeX = maxX - minX;
-  const rangeY = maxY - minY;
-  
-  // Map UVs based on original bounds for first 4 corners (preserves rectangle mapping)
-  // For additional corners, use current bounds
   for (let i = 0; i < numCorners; i++) {
     newPositions[i*3+0] = cornerPositions[i].x;
     newPositions[i*3+1] = cornerPositions[i].y;
     newPositions[i*3+2] = cornerPositions[i].z;
     
-    // UV mapping: use original bounds for first 4 corners to preserve texture warping
-    if (i < 4 && rangeX > 0 && rangeY > 0) {
-      // Map from original bounds to UV space (0-1) - this makes texture warp with geometry
-      const origRangeX = originalBounds.maxX - originalBounds.minX;
-      const origRangeY = originalBounds.maxY - originalBounds.minY;
-      // Normalize based on original rectangle bounds
-      newUVs[i*2+0] = (cornerPositions[i].x - originalBounds.minX) / origRangeX;
-      newUVs[i*2+1] = 1.0 - (cornerPositions[i].y - originalBounds.minY) / origRangeY; // Flip Y for texture coords
-    } else if (rangeX > 0 && rangeY > 0) {
-      // Additional corners: map based on current bounds
-      newUVs[i*2+0] = (cornerPositions[i].x - minX) / rangeX;
-      newUVs[i*2+1] = 1.0 - (cornerPositions[i].y - minY) / rangeY;
+    // For first 4 corners, use standard free transform UV mapping
+    if (i < 4) {
+      newUVs[i*2+0] = standardUVs[i][0];
+      newUVs[i*2+1] = standardUVs[i][1];
     } else {
-      // Fallback if bounds are invalid
-      newUVs[i*2+0] = (cornerPositions[i].x + 1) / 2;
-      newUVs[i*2+1] = (cornerPositions[i].y + 1) / 2;
+      // For additional corners, calculate UV based on position relative to bounds
+      // This allows new corners to also participate in the distortion
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (let j = 0; j < numCorners; j++) {
+        minX = Math.min(minX, cornerPositions[j].x);
+        maxX = Math.max(maxX, cornerPositions[j].x);
+        minY = Math.min(minY, cornerPositions[j].y);
+        maxY = Math.max(maxY, cornerPositions[j].y);
+      }
+      const rangeX = maxX - minX;
+      const rangeY = maxY - minY;
+      
+      if (rangeX > 0 && rangeY > 0) {
+        // Map to UV space based on current bounds
+        newUVs[i*2+0] = (cornerPositions[i].x - minX) / rangeX;
+        newUVs[i*2+1] = 1.0 - (cornerPositions[i].y - minY) / rangeY; // Flip Y
+      } else {
+        // Fallback
+        newUVs[i*2+0] = (cornerPositions[i].x + 1) / 2;
+        newUVs[i*2+1] = (cornerPositions[i].y + 1) / 2;
+      }
     }
   }
   
