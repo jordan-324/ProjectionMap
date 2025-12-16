@@ -236,6 +236,8 @@ let startScale = 1.0;
 let currentScale = 1.0;
 let mouseSelectedCorner = -1; // for mouse interaction
 let isMouseDragging = false;
+let depthOffset = 0; // for depth control with mouse wheel
+let startDragZ = 0; // original z position when drag starts
 // Note: targetCornerPositions and originalSphereColors are declared above with corner spheres
 
 // convert normalized 0..1 hand coords (MediaPipe) to NDC (-1 .. 1)
@@ -276,14 +278,14 @@ function isHandClosed(landmarks) {
   return closedCount >= 2;
 }
 
-// move a corner given an ndc coordinate (casts a ray from camera into z=0 plane)
+// move a corner given an ndc coordinate - supports depth control
 const raycaster = new THREE.Raycaster();
 const tmpVec = new THREE.Vector2();
-function ndcToWorld(xNdc, yNdc){
+function ndcToWorld(xNdc, yNdc, depthZ = 0){
   tmpVec.set(xNdc, yNdc);
   raycaster.setFromCamera(tmpVec, camera);
-  // intersect with z=0 plane
-  const planeZ = new THREE.Plane(new THREE.Vector3(0,0,1), 0);
+  // intersect with plane at specified depth (default z=0)
+  const planeZ = new THREE.Plane(new THREE.Vector3(0,0,1), -depthZ);
   const pt = new THREE.Vector3();
   raycaster.ray.intersectPlane(planeZ, pt);
   return pt;
@@ -515,9 +517,12 @@ hands.onResults((results) => {
       // Already grabbing - update position or scale
       if (selectedCorner >= 0) {
         // Move selected corner smoothly to current index fingertip position
+        // Preserve the current z position (depth) when moving with hand
+        const currentZ = targetCornerPositions[selectedCorner].z;
         const ndc = screenToNDC(indexTip.x, indexTip.y);
-        const worldPt = ndcToWorld(ndc.x, ndc.y);
+        const worldPt = ndcToWorld(ndc.x, ndc.y, currentZ);
         targetCornerPositions[selectedCorner].copy(worldPt);
+        targetCornerPositions[selectedCorner].z = currentZ; // Preserve depth
       } else {
         // No corner selected: do nothing (disable hand-based scaling)
       }
@@ -607,8 +612,8 @@ cameraFeed.start();
 function animate(){
   requestAnimationFrame(animate);
   
-  // Smooth interpolation of corner positions
-  for (let i=0;i<4;i++){
+  // Smooth interpolation of corner positions (dynamic number of corners)
+  for (let i=0; i<cornerPositions.length && i<targetCornerPositions.length; i++){
     cornerPositions[i].lerp(targetCornerPositions[i], smoothingFactor);
   }
   applyCornerPositionsToGeometry();
@@ -686,6 +691,8 @@ function handleMouseDown(e) {
   if (corner >= 0) {
     mouseSelectedCorner = corner;
     isMouseDragging = true;
+    depthOffset = 0; // Reset depth offset when starting new drag
+    startDragZ = targetCornerPositions[corner].z; // Store original z position
     // Change color to indicate selection
     cornerSpheres[corner].material.color.setHex(grabbedColor);
     e.preventDefault();
@@ -703,8 +710,11 @@ function handleMouseMove(e) {
   
   if (isMouseDragging && mouseSelectedCorner >= 0) {
     // Dragging - always work even if over UI
-    const worldPt = ndcToWorld(ndc.x, ndc.y);
+    // Use original z position + depth offset
+    const currentZ = startDragZ + depthOffset;
+    const worldPt = ndcToWorld(ndc.x, ndc.y, currentZ);
     targetCornerPositions[mouseSelectedCorner].copy(worldPt);
+    targetCornerPositions[mouseSelectedCorner].z = currentZ;
     e.preventDefault();
     e.stopPropagation();
   } else {
@@ -762,6 +772,25 @@ function handleMouseLeave(e) {
 }
 
 renderer.domElement.addEventListener('mouseleave', handleMouseLeave);
+
+// Mouse wheel for depth control when dragging
+renderer.domElement.addEventListener('wheel', (e) => {
+  if (isMouseDragging && mouseSelectedCorner >= 0) {
+    e.preventDefault();
+    // Adjust depth based on wheel delta
+    const depthSpeed = 0.1;
+    depthOffset += e.deltaY * depthSpeed * 0.01; // Negative deltaY = scroll up = move forward
+    // Clamp depth to reasonable range
+    depthOffset = Math.max(-2, Math.min(2, depthOffset));
+    
+    // Update the corner position with new depth
+    const ndc = mouseToNDC(e.clientX, e.clientY);
+    const currentZ = startDragZ + depthOffset;
+    const worldPt = ndcToWorld(ndc.x, ndc.y, currentZ);
+    targetCornerPositions[mouseSelectedCorner].copy(worldPt);
+    targetCornerPositions[mouseSelectedCorner].z = currentZ;
+  }
+}, { passive: false });
 
 // ============ RIGHT-CLICK FUNCTIONALITY ============
 let contextMenuCornerIndex = -1;
@@ -827,6 +856,8 @@ renderer.domElement.addEventListener('touchstart', (e) => {
     if (corner >= 0) {
       mouseSelectedCorner = corner;
       isMouseDragging = true;
+      depthOffset = 0;
+      startDragZ = targetCornerPositions[corner].z;
       cornerSpheres[corner].material.color.setHex(grabbedColor);
       e.preventDefault();
     }
@@ -837,8 +868,11 @@ renderer.domElement.addEventListener('touchmove', (e) => {
   if (isMouseDragging && mouseSelectedCorner >= 0 && e.touches.length === 1) {
     const touch = e.touches[0];
     const ndc = mouseToNDC(touch.clientX, touch.clientY);
-    const worldPt = ndcToWorld(ndc.x, ndc.y);
+    // Preserve z position (depth) when moving with touch
+    const currentZ = startDragZ + depthOffset;
+    const worldPt = ndcToWorld(ndc.x, ndc.y, currentZ);
     targetCornerPositions[mouseSelectedCorner].copy(worldPt);
+    targetCornerPositions[mouseSelectedCorner].z = currentZ;
     e.preventDefault();
   }
 });
