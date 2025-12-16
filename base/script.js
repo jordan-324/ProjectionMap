@@ -16,6 +16,9 @@ const saveLayoutBtn = document.getElementById('saveLayout');
 const loadBtn = document.getElementById('loadBtn');
 const layoutFile = document.getElementById('layoutFile');
 const mediaFileInput = document.getElementById('mediaFile');
+const menuToggle = document.getElementById('menuToggle');
+const toggleIcon = document.getElementById('toggleIcon');
+const controlsPanel = document.getElementById('controls');
 
 let performanceMode = false;
 let camPreviewVisible = true; // track preview visibility
@@ -710,7 +713,8 @@ function enterPerformanceMode() {
   cornerSpheres.forEach(s => s.visible = false);
   outline.visible = false;
   if (backgroundMesh) backgroundMesh.visible = false; // Hide webcam background
-  document.getElementById('controls').style.display = 'none';
+  controlsPanel.classList.remove('open'); // Close menu if open
+  menuToggle.style.display = 'none'; // Hide toggle button
   overlayCanvas.style.display = 'none'; // Hide hand tracking overlay
   helpText.style.display = 'none'; // Hide help text
   
@@ -730,7 +734,7 @@ function exitPerformanceMode() {
   cornerSpheres.forEach(s => s.visible = true);
   outline.visible = true;
   if (backgroundMesh) backgroundMesh.visible = true; // Show webcam background
-  document.getElementById('controls').style.display = '';
+  menuToggle.style.display = 'flex'; // Show toggle button
   overlayCanvas.style.display = 'block'; // Show hand tracking overlay
   helpText.style.display = ''; // Show help text
   
@@ -744,6 +748,25 @@ function exitPerformanceMode() {
   helpText.innerText = 'Exited Performance Mode';
   console.log('Performance Mode: OFF');
 }
+
+// Menu toggle button
+let menuOpen = false;
+menuToggle.addEventListener('click', (e) => {
+  e.stopPropagation(); // Prevent corner dragging when clicking toggle
+  menuOpen = !menuOpen;
+  
+  if (menuOpen) {
+    // Open menu - animate + to X
+    toggleIcon.classList.remove('plus');
+    toggleIcon.classList.add('x');
+    controlsPanel.classList.add('open');
+  } else {
+    // Close menu - animate X to +
+    toggleIcon.classList.remove('x');
+    toggleIcon.classList.add('plus');
+    controlsPanel.classList.remove('open');
+  }
+});
 
 togglePerformanceBtn.addEventListener('click', () => {
   if (performanceMode) {
