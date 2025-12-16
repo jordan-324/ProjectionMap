@@ -216,7 +216,7 @@ for (let i=0;i<4;i++){
   const s = new THREE.Mesh(sphereGeom, sphereMat);
   s.position.copy(cornerPositions[i]);
   s.renderOrder = 2; // render on top
-  scene.add(s);
+  windowGroup.add(s); // Add to windowGroup so it scales with the mesh
   cornerSpheres.push(s);
   originalSphereColors.push(defaultColor);
   targetCornerPositions.push(cornerPositions[i].clone());
@@ -235,7 +235,7 @@ const initialLinePos = new Float32Array([
 lineGeom.setAttribute('position', new THREE.BufferAttribute(initialLinePos, 3));
 const outline = new THREE.LineLoop(lineGeom, outlineMat); // LineLoop automatically connects last to first
 outline.renderOrder = 2; // render on top
-scene.add(outline);
+windowGroup.add(outline); // Add to windowGroup so it scales with the mesh
 
 // ============ Interaction State ============
 let mouseSelectedCorner = -1; // for mouse interaction
@@ -393,7 +393,7 @@ function addCorner(worldPos) {
   s.position.copy(newPos);
   s.renderOrder = 2;
   s.userData.cornerIndex = cornerPositions.length - 1; // Store index for deletion
-  scene.add(s);
+  windowGroup.add(s); // Add to windowGroup so it scales with the mesh
   cornerSpheres.push(s);
   originalSphereColors.push(defaultColor);
   
@@ -413,9 +413,9 @@ function removeCorner(index) {
   targetCornerPositions.splice(index, 1);
   originalSphereColors.splice(index, 1);
   
-  // Remove sphere from scene
+  // Remove sphere from windowGroup
   const sphere = cornerSpheres[index];
-  scene.remove(sphere);
+  windowGroup.remove(sphere);
   sphere.geometry.dispose();
   sphere.material.dispose();
   cornerSpheres.splice(index, 1);
