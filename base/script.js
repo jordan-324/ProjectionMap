@@ -236,13 +236,10 @@ let startDragZ = 0; // original z position when drag starts
 
 // Hand gesture state
 let leftHandPinching = false;
-let rightHandPinching = false;
 let startPinchDistance = 0;
 let startScale = 1.0;
 let currentScale = 1.0;
 let targetScale = 1.0; // For smooth interpolation
-let startRotation = 0;
-let currentRotation = 0;
 const scaleSmoothing = 0.15; // Smoothing factor for scale (lower = smoother, more lag)
 
 // Note: targetCornerPositions and originalSphereColors are declared above with corner spheres
@@ -453,33 +450,26 @@ hands.onResults((results) => {
   drawHandsOverlay(allHands);
 
   if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-    // Release pinches if hands disappear
+    // Release pinch if hand disappears
     if (leftHandPinching) {
       leftHandPinching = false;
     }
-    if (rightHandPinching) {
-      rightHandPinching = false;
-    }
-    helpText.innerText = performanceMode ? '' : 'No hands detected. Pinch with left hand to scale, right hand to rotate.';
+    helpText.innerText = performanceMode ? '' : 'No hands detected. Pinch with left hand to scale.';
     return;
   }
 
-  // Separate left and right hands
+  // Find left hand
   let leftHand = null;
-  let rightHand = null;
   
   results.multiHandLandmarks.forEach((landmarks, idx) => {
     const handedness = results.multiHandedness?.[idx]?.label;
     if (handedness === 'Left') {
       leftHand = landmarks;
-    } else if (handedness === 'Right') {
-      rightHand = landmarks;
     }
   });
 
-  // If only one hand detected, use it (MediaPipe may not always detect handedness correctly)
-  if (!leftHand && !rightHand && results.multiHandLandmarks.length > 0) {
-    // Default: first hand is left if only one detected
+  // If no left hand detected but we have hands, use the first one
+  if (!leftHand && results.multiHandLandmarks.length > 0) {
     leftHand = results.multiHandLandmarks[0];
   }
 
@@ -518,59 +508,12 @@ hands.onResults((results) => {
     }
   }
 
-  // RIGHT HAND: Pinch to rotate
-  if (rightHand) {
-    const rightPinching = isPinching(rightHand);
-    
-    if (rightPinching && !rightHandPinching) {
-      // Just started pinching - initialize rotation
-      rightHandPinching = true;
-      startPinchDistance = getPinchDistance(rightHand);
-      startRotation = currentRotation;
-      // Store initial angle for relative rotation
-      const thumbTip = rightHand[4];
-      const indexTip = rightHand[8];
-      const pinchCenterX = (thumbTip.x + indexTip.x) / 2;
-      const pinchCenterY = (thumbTip.y + indexTip.y) / 2;
-      const wrist = rightHand[0];
-      window._rightHandStartAngle = Math.atan2(pinchCenterY - wrist.y, pinchCenterX - wrist.x);
-    } else if (rightPinching && rightHandPinching) {
-      // Continue pinching - update rotation based on pinch center movement
-      const thumbTip = rightHand[4];
-      const indexTip = rightHand[8];
-      const pinchCenterX = (thumbTip.x + indexTip.x) / 2;
-      const pinchCenterY = (thumbTip.y + indexTip.y) / 2;
-      const wrist = rightHand[0];
-      
-      // Calculate angle from wrist to pinch center
-      const angle = Math.atan2(pinchCenterY - wrist.y, pinchCenterX - wrist.x);
-      
-      // Calculate relative rotation from start
-      if (window._rightHandStartAngle !== undefined) {
-        const angleDelta = angle - window._rightHandStartAngle;
-        // Convert to degrees and apply sensitivity
-        currentRotation = startRotation + (angleDelta * 180 / Math.PI) * 3;
-      }
-    } else if (!rightPinching && rightHandPinching) {
-      // Released pinch
-      rightHandPinching = false;
-      window._rightHandStartAngle = undefined; // Reset angle reference
-    }
-  } else {
-    // Right hand disappeared
-    if (rightHandPinching) {
-      rightHandPinching = false;
-    }
-  }
-
   // Update help text
   if (!performanceMode) {
     if (leftHandPinching) {
       helpText.innerText = `Scaling: ${currentScale.toFixed(2)}x`;
-    } else if (rightHandPinching) {
-      helpText.innerText = `Rotating: ${currentRotation.toFixed(1)}°`;
     } else {
-      helpText.innerText = 'Pinch with left hand to scale, right hand to rotate. Use mouse to move corners.';
+      helpText.innerText = 'Pinch with left hand to scale. Use mouse to move corners.';
     }
   }
 });
@@ -656,9 +599,8 @@ function animate(){
     currentScale = currentScale + (targetScale - currentScale) * 0.1;
   }
   
-  // Apply scale and rotation to windowGroup (origami-like transformation)
+  // Apply scale to windowGroup (origami-like transformation)
   windowGroup.scale.set(currentScale, currentScale, currentScale);
-  windowGroup.rotation.z = currentRotation * Math.PI / 180; // Convert degrees to radians
   
   // update video textures if they're videos (Three.VideoTexture auto-updates)
   if (videoTexture && videoTexture.image && videoTexture.image.readyState >= 2) {
