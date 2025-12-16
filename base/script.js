@@ -181,6 +181,14 @@ geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
 geometry.setIndex(new THREE.BufferAttribute(indices, 1));
 geometry.computeVertexNormals();
 
+// Store original bounds for UV warping calculation
+let originalBounds = {
+  minX: -0.8,
+  maxX: 0.8,
+  minY: -0.8,
+  maxY: 0.8
+};
+
 // Placeholder texture until webcam is ready
 const placeholderTexture = new THREE.DataTexture(new Uint8Array([30, 30, 30, 255]), 1, 1, THREE.RGBAFormat);
 placeholderTexture.needsUpdate = true;
@@ -280,6 +288,7 @@ function ndcToWorld(xNdc, yNdc, depthZ = 0){
 }
 
 // Simple triangulation for polygon (fan from first vertex)
+// UV mapping warps with geometry - uses fixed UVs so texture warps naturally
 function updateGeometryForPolygon() {
   const numCorners = cornerPositions.length;
   if (numCorners < 3) return; // Need at least 3 corners
@@ -288,13 +297,42 @@ function updateGeometryForPolygon() {
   const newPositions = new Float32Array(numCorners * 3);
   const newUVs = new Float32Array(numCorners * 2);
   
+  // Calculate current bounds for UV mapping
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < numCorners; i++) {
+    minX = Math.min(minX, cornerPositions[i].x);
+    maxX = Math.max(maxX, cornerPositions[i].x);
+    minY = Math.min(minY, cornerPositions[i].y);
+    maxY = Math.max(maxY, cornerPositions[i].y);
+  }
+  
+  const rangeX = maxX - minX;
+  const rangeY = maxY - minY;
+  
+  // Map UVs based on original bounds for first 4 corners (preserves rectangle mapping)
+  // For additional corners, use current bounds
   for (let i = 0; i < numCorners; i++) {
     newPositions[i*3+0] = cornerPositions[i].x;
     newPositions[i*3+1] = cornerPositions[i].y;
     newPositions[i*3+2] = cornerPositions[i].z;
-    // Simple UV mapping
-    newUVs[i*2+0] = (cornerPositions[i].x + 1) / 2;
-    newUVs[i*2+1] = (cornerPositions[i].y + 1) / 2;
+    
+    // UV mapping: use original bounds for first 4 corners to preserve texture warping
+    if (i < 4 && rangeX > 0 && rangeY > 0) {
+      // Map from original bounds to UV space (0-1) - this makes texture warp with geometry
+      const origRangeX = originalBounds.maxX - originalBounds.minX;
+      const origRangeY = originalBounds.maxY - originalBounds.minY;
+      // Normalize based on original rectangle bounds
+      newUVs[i*2+0] = (cornerPositions[i].x - originalBounds.minX) / origRangeX;
+      newUVs[i*2+1] = 1.0 - (cornerPositions[i].y - originalBounds.minY) / origRangeY; // Flip Y for texture coords
+    } else if (rangeX > 0 && rangeY > 0) {
+      // Additional corners: map based on current bounds
+      newUVs[i*2+0] = (cornerPositions[i].x - minX) / rangeX;
+      newUVs[i*2+1] = 1.0 - (cornerPositions[i].y - minY) / rangeY;
+    } else {
+      // Fallback if bounds are invalid
+      newUVs[i*2+0] = (cornerPositions[i].x + 1) / 2;
+      newUVs[i*2+1] = (cornerPositions[i].y + 1) / 2;
+    }
   }
   
   // Create indices for triangulation (fan from vertex 0)
@@ -390,6 +428,15 @@ cornerPositions[0].set(-squareSize, squareSize, 0);   // TL
 cornerPositions[1].set( squareSize, squareSize, 0);   // TR
 cornerPositions[2].set( squareSize, -squareSize, 0);  // BR
 cornerPositions[3].set(-squareSize, -squareSize, 0);  // BL
+
+// Update original bounds to match initial square for UV warping
+originalBounds = {
+  minX: -squareSize,
+  maxX: squareSize,
+  minY: -squareSize,
+  maxY: squareSize
+};
+
 // Initialize target positions for smoothing
 for (let i=0;i<4;i++){
   targetCornerPositions[i].copy(cornerPositions[i]);
