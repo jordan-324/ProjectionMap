@@ -257,14 +257,70 @@ const texturePanSensitivity = 2.0; // How sensitive the Y-axis movement is for p
 let currentScale = 1.0;
 let targetScale = 1.0;
 
-// Right hand rotation state (Y-axis rotation for left/right)
+// Right hand rotation state (palm orientation controls image orientation)
 let rightHandActive = false;
-let startHandX = 0; // Initial hand X position when rotation starts
-let startRotationY = 0;
-let currentRotationY = 0;
-let targetRotationY = 0;
+let startRotationX = 0; // Pitch (forward/back tilt)
+let startRotationZ = 0; // Roll (left/right tilt)
+let currentRotationX = 0;
+let currentRotationZ = 0;
+let targetRotationX = 0;
+let targetRotationZ = 0;
 const rotationSmoothing = 0.2; // Smoothing factor for rotation
-const rotationSensitivity = 2.0; // How sensitive the X-axis movement is for rotation
+const rotationSensitivity = 1.5; // How sensitive the palm orientation is for rotation
+
+// Compute palm orientation and check if palm is facing camera
+function computePalmOrientation(landmarks) {
+  if (!landmarks || landmarks.length < 21) return null;
+  
+  // Key points for palm orientation
+  const wrist = landmarks[0];
+  const indexMCP = landmarks[5];  // Index finger MCP (base)
+  const pinkyMCP = landmarks[17]; // Pinky MCP (base)
+  const middleMCP = landmarks[9]; // Middle MCP
+  
+  // Create vectors from wrist to finger bases
+  const v1 = new THREE.Vector3(
+    indexMCP.x - wrist.x,
+    indexMCP.y - wrist.y,
+    indexMCP.z - wrist.z
+  );
+  const v2 = new THREE.Vector3(
+    pinkyMCP.x - wrist.x,
+    pinkyMCP.y - wrist.y,
+    pinkyMCP.z - wrist.z
+  );
+  
+  // Compute palm normal using cross product
+  const normal = new THREE.Vector3().crossVectors(v1, v2).normalize();
+  
+  // If normal is invalid (zero length), use alternative calculation
+  if (normal.length() < 0.01) {
+    const v3 = new THREE.Vector3(
+      middleMCP.x - wrist.x,
+      middleMCP.y - wrist.y,
+      middleMCP.z - wrist.z
+    );
+    normal.crossVectors(v1, v3).normalize();
+  }
+  
+  // Check if palm is facing camera (normal should point toward camera, i.e., positive Z)
+  // In MediaPipe coordinates, camera is at positive Z, so palm facing camera means normal.z > 0
+  const isPalmFacing = normal.z > 0.3; // Threshold to ensure palm is facing camera
+  
+  if (!isPalmFacing) return null;
+  
+  // Convert normal to pitch (X-axis rotation) and roll (Z-axis rotation)
+  // Pitch: forward/back tilt (rotation around X-axis)
+  // Roll: left/right tilt (rotation around Z-axis)
+  
+  // Pitch: based on Y component of normal (up/down tilt)
+  const pitch = Math.asin(-normal.y); // Negative because up should be positive pitch
+  
+  // Roll: based on X component of normal (left/right tilt)
+  const roll = Math.atan2(normal.x, Math.sqrt(normal.y * normal.y + normal.z * normal.z));
+  
+  return { pitch, roll, normal };
+}
 
 // Note: targetCornerPositions and originalSphereColors are declared above with corner spheres
 
@@ -603,32 +659,44 @@ hands.onResults((results) => {
     }
   }
 
-  // RIGHT HAND: X-axis controls Y-axis rotation (left/right, no pinch needed, just hand presence)
+  // RIGHT HAND: Palm orientation controls image orientation (only when palm faces camera)
   if (rightHand) {
-    const wrist = rightHand[0];
-    const currentHandX = wrist.x; // X position in normalized coordinates (0-1)
+    const orientation = computePalmOrientation(rightHand);
     
-    if (!rightHandActive) {
-      // Just detected right hand - initialize rotation
-      rightHandActive = true;
-      startHandX = currentHandX;
-      startRotationY = currentRotationY;
-      targetRotationY = currentRotationY;
+    if (orientation) {
+      // Palm is facing camera - use orientation for rotation
+      if (!rightHandActive) {
+        // Just detected palm facing camera - initialize rotation
+        rightHandActive = true;
+        startRotationX = currentRotationX;
+        startRotationZ = currentRotationZ;
+        targetRotationX = currentRotationX;
+        targetRotationZ = currentRotationZ;
+      } else {
+        // Continue tracking - update rotation based on palm orientation
+        // Pitch (forward/back tilt) -> X-axis rotation
+        // Roll (left/right tilt) -> Z-axis rotation
+        targetRotationX = orientation.pitch * rotationSensitivity;
+        targetRotationZ = orientation.roll * rotationSensitivity;
+        
+        // Clamp rotations to reasonable range
+        targetRotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetRotationX));
+        targetRotationZ = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetRotationZ));
+      }
     } else {
-      // Continue tracking - update rotation based on X-axis movement
-      // X position: 0 = left, 1 = right
-      // Convert to Y-axis rotation: center (0.5) = 0 rotation, left = negative (rotate left), right = positive (rotate right)
-      const xDelta = (currentHandX - startHandX) * rotationSensitivity;
-      targetRotationY = startRotationY + xDelta * Math.PI; // Scale to radians
-      
-      // Clamp rotation to reasonable range
-      targetRotationY = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetRotationY));
+      // Palm not facing camera - deactivate
+      if (rightHandActive) {
+        rightHandActive = false;
+        targetRotationX = currentRotationX; // Lock current rotations
+        targetRotationZ = currentRotationZ;
+      }
     }
   } else {
     // Right hand disappeared
     if (rightHandActive) {
       rightHandActive = false;
-      targetRotationY = currentRotationY; // Lock current rotation
+      targetRotationX = currentRotationX;
+      targetRotationZ = currentRotationZ;
     }
   }
 
@@ -637,7 +705,7 @@ hands.onResults((results) => {
     if (leftHandPinching) {
       helpText.innerText = `Panning: ${currentTextureOffsetX.toFixed(2)}`;
     } else if (rightHandActive) {
-      helpText.innerText = `Rotating: ${(currentRotationY * 180 / Math.PI).toFixed(1)}°`;
+      helpText.innerText = `Rotating: Pitch ${(currentRotationX * 180 / Math.PI).toFixed(1)}°, Roll ${(currentRotationZ * 180 / Math.PI).toFixed(1)}°`;
     } else {
       helpText.innerText = 'Left hand: Y-axis for panning. Right hand: X-axis for rotation.';
     }
@@ -732,18 +800,21 @@ function animate(){
     videoTexture.offset.x = 1 + currentTextureOffsetX;
   }
   
-  // Smooth rotation interpolation (Y-axis for left/right)
+  // Smooth rotation interpolation (pitch and roll from palm orientation)
   if (rightHandActive) {
     // When actively rotating, use faster interpolation for responsiveness
-    currentRotationY = currentRotationY + (targetRotationY - currentRotationY) * (1 - rotationSmoothing);
+    currentRotationX = currentRotationX + (targetRotationX - currentRotationX) * (1 - rotationSmoothing);
+    currentRotationZ = currentRotationZ + (targetRotationZ - currentRotationZ) * (1 - rotationSmoothing);
   } else {
     // When not rotating, smoothly settle to target
-    currentRotationY = currentRotationY + (targetRotationY - currentRotationY) * 0.1;
+    currentRotationX = currentRotationX + (targetRotationX - currentRotationX) * 0.1;
+    currentRotationZ = currentRotationZ + (targetRotationZ - currentRotationZ) * 0.1;
   }
   
   // Apply scale and rotation to windowGroup (origami-like transformation)
   windowGroup.scale.set(currentScale, currentScale, currentScale);
-  windowGroup.rotation.y = currentRotationY; // Y-axis rotation (left/right) from right hand X-axis movement
+  windowGroup.rotation.x = currentRotationX; // Pitch (forward/back tilt)
+  windowGroup.rotation.z = currentRotationZ; // Roll (left/right tilt)
   
   // update video textures if they're videos (Three.VideoTexture auto-updates)
   if (videoTexture && videoTexture.image && videoTexture.image.readyState >= 2) {
