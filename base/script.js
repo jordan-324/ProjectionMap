@@ -240,8 +240,10 @@ let rightHandPinching = false;
 let startPinchDistance = 0;
 let startScale = 1.0;
 let currentScale = 1.0;
+let targetScale = 1.0; // For smooth interpolation
 let startRotation = 0;
 let currentRotation = 0;
+const scaleSmoothing = 0.15; // Smoothing factor for scale (lower = smoother, more lag)
 
 // Note: targetCornerPositions and originalSphereColors are declared above with corner spheres
 
@@ -260,7 +262,8 @@ function getPinchDistance(landmarks) {
   return Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y, thumbTip.z - indexTip.z);
 }
 
-function isPinching(landmarks, threshold = 0.05) {
+// More permissive pinch detection - allows for natural finger movement
+function isPinching(landmarks, threshold = 0.08) {
   return getPinchDistance(landmarks) < threshold;
 }
 
@@ -480,30 +483,38 @@ hands.onResults((results) => {
     leftHand = results.multiHandLandmarks[0];
   }
 
-  // LEFT HAND: Pinch to scale
+  // LEFT HAND: Pinch to scale (TouchDesigner-style: open fingers = larger, close = smaller)
   if (leftHand) {
     const leftPinching = isPinching(leftHand);
+    const currentPinchDistance = getPinchDistance(leftHand);
     
     if (leftPinching && !leftHandPinching) {
       // Just started pinching - initialize scale
       leftHandPinching = true;
-      startPinchDistance = getPinchDistance(leftHand);
+      startPinchDistance = currentPinchDistance;
       startScale = currentScale;
+      targetScale = currentScale; // Sync target with current
     } else if (leftPinching && leftHandPinching) {
-      // Continue pinching - update scale
-      const currentPinchDistance = getPinchDistance(leftHand);
-      const scaleDelta = startPinchDistance / currentPinchDistance; // inverse: closer = larger scale
-      currentScale = startScale * scaleDelta;
+      // Continue pinching - update target scale
+      // Opening fingers (larger distance) = larger scale
+      // Closing fingers (smaller distance) = smaller scale
+      const distanceRatio = currentPinchDistance / startPinchDistance;
+      targetScale = startScale * distanceRatio;
+      
       // Clamp scale to reasonable range
-      currentScale = Math.max(0.1, Math.min(5.0, currentScale));
+      targetScale = Math.max(0.1, Math.min(5.0, targetScale));
+      
+      // Target scale is set, smoothing will happen in render loop for smooth interpolation
     } else if (!leftPinching && leftHandPinching) {
       // Released pinch
       leftHandPinching = false;
+      targetScale = currentScale; // Lock current scale
     }
   } else {
     // Left hand disappeared
     if (leftHandPinching) {
       leftHandPinching = false;
+      targetScale = currentScale;
     }
   }
 
@@ -635,6 +646,15 @@ function animate(){
     cornerPositions[i].lerp(targetCornerPositions[i], smoothingFactor);
   }
   applyCornerPositionsToGeometry();
+  
+  // Smooth interpolation of scale for pinch gestures (TouchDesigner-style smoothness)
+  if (leftHandPinching) {
+    // When actively pinching, use faster interpolation for responsiveness
+    currentScale = currentScale + (targetScale - currentScale) * (1 - scaleSmoothing);
+  } else {
+    // When not pinching, smoothly settle to target
+    currentScale = currentScale + (targetScale - currentScale) * 0.1;
+  }
   
   // Apply scale and rotation to windowGroup (origami-like transformation)
   windowGroup.scale.set(currentScale, currentScale, currentScale);
