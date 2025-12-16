@@ -68,9 +68,9 @@ function attachVideoTexture() {
       console.log('Background texture created');
     }
     
-    // SIMPLIFIED: Just attach the texture directly
+    // Attach texture to shader material
     if (backgroundMesh && backgroundTexture) {
-      backgroundMesh.material.map = backgroundTexture;
+      backgroundMesh.material.uniforms.uTexture.value = backgroundTexture;
       backgroundMesh.material.needsUpdate = true;
       console.log('✓ Background texture attached! Video:', camVideo.videoWidth, 'x', camVideo.videoHeight);
     }
@@ -136,8 +136,33 @@ const bgSize = 15; // increased from 10 to zoom out the background
 const bgGeo = new THREE.PlaneGeometry(bgSize, bgSize);
 const bgPlaceholder = new THREE.DataTexture(new Uint8Array([50, 50, 50, 255]), 1, 1, THREE.RGBAFormat);
 bgPlaceholder.needsUpdate = true;
-const bgMat = new THREE.MeshBasicMaterial({ 
-  map: bgPlaceholder, 
+
+// Custom shader material for grayscale background
+const bgVertexShader = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const bgFragmentShader = `
+  uniform sampler2D uTexture;
+  varying vec2 vUv;
+  void main() {
+    vec4 color = texture2D(uTexture, vUv);
+    // Convert to grayscale using luminance weights (standard RGB to grayscale conversion)
+    float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+    gl_FragColor = vec4(vec3(gray), color.a);
+  }
+`;
+
+const bgMat = new THREE.ShaderMaterial({
+  uniforms: {
+    uTexture: { value: bgPlaceholder }
+  },
+  vertexShader: bgVertexShader,
+  fragmentShader: bgFragmentShader,
   depthWrite: false,
   depthTest: false,
   side: THREE.DoubleSide
@@ -657,9 +682,9 @@ function animate(){
     if (backgroundTexture.image.readyState >= 2) {
       backgroundTexture.needsUpdate = true;
     }
-    // Ensure background mesh has the texture
-    if (backgroundMesh && backgroundMesh.material.map !== backgroundTexture) {
-      backgroundMesh.material.map = backgroundTexture;
+    // Ensure background mesh has the texture (grayscale shader)
+    if (backgroundMesh && backgroundTexture && backgroundMesh.material.uniforms) {
+      backgroundMesh.material.uniforms.uTexture.value = backgroundTexture;
       backgroundMesh.material.needsUpdate = true;
     }
   }
