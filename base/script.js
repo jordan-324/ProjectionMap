@@ -18,6 +18,7 @@ const layoutFile = document.getElementById('layoutFile');
 const mediaFileInput = document.getElementById('mediaFile');
 
 let performanceMode = false;
+let camPreviewVisible = true; // track preview visibility
 
 // ============ VIDEO / MEDIA SETUP ============
 const camVideo = document.createElement('video');
@@ -685,19 +686,62 @@ renderer.domElement.addEventListener('touchend', (e) => {
 });
 
 // ============ UI Controls ============
+function enterPerformanceMode() {
+  performanceMode = true;
+  // Hide all UI elements
+  cornerSpheres.forEach(s => s.visible = false);
+  outline.visible = false;
+  if (backgroundMesh) backgroundMesh.visible = false; // Hide webcam background
+  document.getElementById('controls').style.display = 'none';
+  overlayCanvas.style.display = 'none'; // Hide hand tracking overlay
+  helpText.style.display = 'none'; // Hide help text
+  
+  // Make entire page black - only media window visible
+  document.body.style.backgroundColor = '#000000';
+  renderer.setClearColor(0x000000, 1); // Solid black background
+  
+  // Hide preview video element
+  if (camVideo) camVideo.style.display = 'none';
+  
+  console.log('Performance Mode: ON - Only media window visible');
+}
+
+function exitPerformanceMode() {
+  performanceMode = false;
+  // Show all UI elements
+  cornerSpheres.forEach(s => s.visible = true);
+  outline.visible = true;
+  if (backgroundMesh) backgroundMesh.visible = true; // Show webcam background
+  document.getElementById('controls').style.display = '';
+  overlayCanvas.style.display = 'block'; // Show hand tracking overlay
+  helpText.style.display = ''; // Show help text
+  
+  // Restore transparent background so webcam shows
+  document.body.style.backgroundColor = '';
+  renderer.setClearColor(0x000000, 0); // Transparent so background mesh shows
+  
+  // Show preview video element
+  if (camVideo) camVideo.style.display = 'none'; // Keep hidden (it's just for texture)
+  
+  helpText.innerText = 'Exited Performance Mode';
+  console.log('Performance Mode: OFF');
+}
+
 togglePerformanceBtn.addEventListener('click', () => {
-  performanceMode = !performanceMode;
   if (performanceMode) {
-    // hide helpers: spheres and outline
-    cornerSpheres.forEach(s => s.visible = false);
-    outline.visible = false;
-    document.getElementById('controls').style.display = 'none';
-    helpText.innerText = '';
+    exitPerformanceMode();
   } else {
-    cornerSpheres.forEach(s => s.visible = true);
-    outline.visible = true;
-    document.getElementById('controls').style.display = '';
-    helpText.innerText = 'Exited Performance Mode';
+    enterPerformanceMode();
+  }
+});
+
+// Escape key exits performance mode (works from anywhere)
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' || e.key === 'Esc') {
+    if (performanceMode) {
+      exitPerformanceMode();
+      e.preventDefault();
+    }
   }
 });
 
