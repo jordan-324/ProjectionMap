@@ -214,12 +214,18 @@ for (let i=0;i<4;i++){
   targetCornerPositions.push(cornerPositions[i].clone());
 }
 
-// A visible outline (thin lines) to better see the quad
+// A visible outline (thin lines) to better see the quad - uses LineLoop to connect all edges
 const outlineMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 }); // white
 const lineGeom = new THREE.BufferGeometry();
-const linePos = new Float32Array([0,0,0, 0,0,0, 0,0,0, 0,0,0, 0,0,0]); // 5 points looped
-lineGeom.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
-const outline = new THREE.Line(lineGeom, outlineMat);
+// Initialize with 4 corners (will be updated dynamically)
+const initialLinePos = new Float32Array([
+  -0.8,  0.8, 0.0,  // TL
+   0.8,  0.8, 0.0,  // TR
+   0.8, -0.8, 0.0,  // BR
+  -0.8, -0.8, 0.0   // BL
+]);
+lineGeom.setAttribute('position', new THREE.BufferAttribute(initialLinePos, 3));
+const outline = new THREE.LineLoop(lineGeom, outlineMat); // LineLoop automatically connects last to first
 outline.renderOrder = 2; // render on top
 scene.add(outline);
 
@@ -327,17 +333,13 @@ function applyCornerPositionsToGeometry(){
   // Update mesh geometry
   updateGeometryForPolygon();
   
-  // Update outline positions (loop)
-  const outlinePositions = new Float32Array((numCorners + 1) * 3); // +1 to close loop
+  // Update outline positions - LineLoop automatically connects last to first
+  const outlinePositions = new Float32Array(numCorners * 3);
   for (let i=0; i<numCorners; i++){
     outlinePositions[i*3+0] = cornerPositions[i].x;
     outlinePositions[i*3+1] = cornerPositions[i].y;
     outlinePositions[i*3+2] = cornerPositions[i].z;
   }
-  // Close the loop
-  outlinePositions[numCorners*3+0] = cornerPositions[0].x;
-  outlinePositions[numCorners*3+1] = cornerPositions[0].y;
-  outlinePositions[numCorners*3+2] = cornerPositions[0].z;
   
   outline.geometry.setAttribute('position', new THREE.BufferAttribute(outlinePositions, 3));
   outline.geometry.attributes.position.needsUpdate = true;
@@ -392,11 +394,12 @@ function removeCorner(index) {
 }
 
 // init corners to a visible square (proper rectangle) - make it larger and more visible
+// Order: TL -> TR -> BR -> BL (clockwise around perimeter)
 const squareSize = 0.8; // increased from 0.5 to make it more visible
 cornerPositions[0].set(-squareSize, squareSize, 0);   // TL
 cornerPositions[1].set( squareSize, squareSize, 0);   // TR
-cornerPositions[2].set(-squareSize, -squareSize, 0); // BL
-cornerPositions[3].set( squareSize, -squareSize, 0);  // BR
+cornerPositions[2].set( squareSize, -squareSize, 0);  // BR
+cornerPositions[3].set(-squareSize, -squareSize, 0);  // BL
 // Initialize target positions for smoothing
 for (let i=0;i<4;i++){
   targetCornerPositions[i].copy(cornerPositions[i]);
