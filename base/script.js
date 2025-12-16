@@ -253,6 +253,15 @@ let targetScale = 1.0; // For smooth interpolation
 const scaleSmoothing = 0.15; // Smoothing factor for scale (lower = smoother, more lag)
 const scaleSensitivity = 3.0; // How sensitive the Y-axis movement is for scaling
 
+// Right hand rotation state
+let rightHandActive = false;
+let startHandX = 0; // Initial hand X position when rotation starts
+let startRotationX = 0;
+let currentRotationX = 0;
+let targetRotationX = 0;
+const rotationSmoothing = 0.2; // Smoothing factor for rotation
+const rotationSensitivity = 2.0; // How sensitive the X-axis movement is for rotation
+
 // Note: targetCornerPositions and originalSphereColors are declared above with corner spheres
 
 // convert normalized 0..1 hand coords (MediaPipe) to NDC (-1 .. 1)
@@ -515,19 +524,34 @@ hands.onResults((results) => {
     return;
   }
 
-  // Find left hand
+  // Find left and right hands
   let leftHand = null;
+  let rightHand = null;
   
   results.multiHandLandmarks.forEach((landmarks, idx) => {
     const handedness = results.multiHandedness?.[idx]?.label;
     if (handedness === 'Left') {
       leftHand = landmarks;
+    } else if (handedness === 'Right') {
+      rightHand = landmarks;
     }
   });
 
-  // If no left hand detected but we have hands, use the first one
-  if (!leftHand && results.multiHandLandmarks.length > 0) {
-    leftHand = results.multiHandLandmarks[0];
+  // If only one hand detected, assign based on position (left side = left hand, right side = right hand)
+  if (!leftHand && !rightHand && results.multiHandLandmarks.length > 0) {
+    const hand = results.multiHandLandmarks[0];
+    const wristX = hand[0].x; // Wrist X position (0-1, where 0.5 is center)
+    if (wristX < 0.5) {
+      leftHand = hand;
+    } else {
+      rightHand = hand;
+    }
+  } else if (!leftHand && results.multiHandLandmarks.length > 0) {
+    // If we have a right hand but no left, and there's another hand, use it as left
+    const otherHand = results.multiHandLandmarks.find((h, idx) => 
+      results.multiHandedness?.[idx]?.label !== 'Right'
+    );
+    if (otherHand) leftHand = otherHand;
   }
 
   // LEFT HAND: Pinch enables scroll mode, then whole hand Y position controls scale
@@ -576,12 +600,43 @@ hands.onResults((results) => {
     }
   }
 
+  // RIGHT HAND: X-axis controls 3D rotation (no pinch needed, just hand presence)
+  if (rightHand) {
+    const wrist = rightHand[0];
+    const currentHandX = wrist.x; // X position in normalized coordinates (0-1)
+    
+    if (!rightHandActive) {
+      // Just detected right hand - initialize rotation
+      rightHandActive = true;
+      startHandX = currentHandX;
+      startRotationX = currentRotationX;
+      targetRotationX = currentRotationX;
+    } else {
+      // Continue tracking - update rotation based on X-axis movement
+      // X position: 0 = left, 1 = right
+      // Convert to rotation: center (0.5) = 0 rotation, left = negative, right = positive
+      const xDelta = (currentHandX - startHandX) * rotationSensitivity;
+      targetRotationX = startRotationX + xDelta * Math.PI; // Scale to radians
+      
+      // Clamp rotation to reasonable range
+      targetRotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetRotationX));
+    }
+  } else {
+    // Right hand disappeared
+    if (rightHandActive) {
+      rightHandActive = false;
+      targetRotationX = currentRotationX; // Lock current rotation
+    }
+  }
+
   // Update help text
   if (!performanceMode) {
     if (leftHandPinching) {
       helpText.innerText = `Scaling: ${currentScale.toFixed(2)}x`;
+    } else if (rightHandActive) {
+      helpText.innerText = `Rotating: ${(currentRotationX * 180 / Math.PI).toFixed(1)}°`;
     } else {
-      helpText.innerText = 'Pinch with left hand to scale. Use mouse to move corners.';
+      helpText.innerText = 'Left hand: Y-axis for scale. Right hand: X-axis for rotation.';
     }
   }
 });
@@ -667,8 +722,18 @@ function animate(){
     currentScale = currentScale + (targetScale - currentScale) * 0.1;
   }
   
-  // Apply scale to windowGroup (origami-like transformation)
+  // Smooth rotation interpolation
+  if (rightHandActive) {
+    // When actively rotating, use faster interpolation for responsiveness
+    currentRotationX = currentRotationX + (targetRotationX - currentRotationX) * (1 - rotationSmoothing);
+  } else {
+    // When not rotating, smoothly settle to target
+    currentRotationX = currentRotationX + (targetRotationX - currentRotationX) * 0.1;
+  }
+  
+  // Apply scale and rotation to windowGroup (origami-like transformation)
   windowGroup.scale.set(currentScale, currentScale, currentScale);
+  windowGroup.rotation.x = currentRotationX; // X-axis rotation from right hand
   
   // update video textures if they're videos (Three.VideoTexture auto-updates)
   if (videoTexture && videoTexture.image && videoTexture.image.readyState >= 2) {
