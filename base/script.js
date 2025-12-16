@@ -19,6 +19,8 @@ const mediaFileInput = document.getElementById('mediaFile');
 const menuToggle = document.getElementById('menuToggle');
 const toggleIcon = document.getElementById('toggleIcon');
 const controlsPanel = document.getElementById('controls');
+const contextMenu = document.getElementById('contextMenu');
+const deleteSegmentBtn = document.getElementById('deleteSegment');
 
 let performanceMode = false;
 let camPreviewVisible = true; // track preview visibility
@@ -193,8 +195,9 @@ windowGroup.add(mesh);
 const cornerSpheres = [];
 const cornerPositions = [0,1,2,3].map(i => new THREE.Vector3(positions[i*3+0], positions[i*3+1], positions[i*3+2]));
 const sphereGeom = new THREE.SphereGeometry(0.04, 12, 10); // larger for easier grabbing/hover
-const defaultColor = 0xff8800; // orange
+const defaultColor = 0xff0000; // red
 const grabbedColor = 0x00ff00; // green when grabbed
+const hoverColor = 0xff3333; // lighter red on hover
 
 // Initialize arrays before using them
 let originalSphereColors = []; // store original colors
@@ -212,7 +215,7 @@ for (let i=0;i<4;i++){
 }
 
 // A visible outline (thin lines) to better see the quad
-const outlineMat = new THREE.LineBasicMaterial({ color: 0x00ffcc, linewidth: 2 });
+const outlineMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 }); // white
 const lineGeom = new THREE.BufferGeometry();
 const linePos = new Float32Array([0,0,0, 0,0,0, 0,0,0, 0,0,0, 0,0,0]); // 5 points looped
 lineGeom.setAttribute('position', new THREE.BufferAttribute(linePos, 3));
@@ -280,27 +283,112 @@ function ndcToWorld(xNdc, yNdc){
   return pt;
 }
 
+// Simple triangulation for polygon (fan from first vertex)
+function updateGeometryForPolygon() {
+  const numCorners = cornerPositions.length;
+  if (numCorners < 3) return; // Need at least 3 corners
+  
+  // Update positions array
+  const newPositions = new Float32Array(numCorners * 3);
+  const newUVs = new Float32Array(numCorners * 2);
+  
+  for (let i = 0; i < numCorners; i++) {
+    newPositions[i*3+0] = cornerPositions[i].x;
+    newPositions[i*3+1] = cornerPositions[i].y;
+    newPositions[i*3+2] = cornerPositions[i].z;
+    // Simple UV mapping
+    newUVs[i*2+0] = (cornerPositions[i].x + 1) / 2;
+    newUVs[i*2+1] = (cornerPositions[i].y + 1) / 2;
+  }
+  
+  // Create indices for triangulation (fan from vertex 0)
+  const newIndices = [];
+  for (let i = 1; i < numCorners - 1; i++) {
+    newIndices.push(0, i, i + 1);
+  }
+  
+  geometry.setAttribute('position', new THREE.BufferAttribute(newPositions, 3));
+  geometry.setAttribute('uv', new THREE.BufferAttribute(newUVs, 2));
+  geometry.setIndex(newIndices);
+  geometry.computeVertexNormals();
+}
+
 // update geometry attributes and helpers from cornerPositions
 function applyCornerPositionsToGeometry(){
-  for (let i=0;i<4;i++){
-    positions[i*3+0] = cornerPositions[i].x;
-    positions[i*3+1] = cornerPositions[i].y;
-    positions[i*3+2] = cornerPositions[i].z;
-    cornerSpheres[i].position.copy(cornerPositions[i]);
+  const numCorners = cornerPositions.length;
+  
+  // Update sphere positions
+  for (let i=0; i<numCorners; i++){
+    if (cornerSpheres[i]) {
+      cornerSpheres[i].position.copy(cornerPositions[i]);
+    }
   }
-  geometry.attributes.position.needsUpdate = true;
-
-  // update outline positions (loop)
-  const arr = outline.geometry.attributes.position.array;
-  for (let i=0;i<4;i++){
-    arr[i*3+0] = cornerPositions[i].x;
-    arr[i*3+1] = cornerPositions[i].y;
-    arr[i*3+2] = cornerPositions[i].z;
+  
+  // Update mesh geometry
+  updateGeometryForPolygon();
+  
+  // Update outline positions (loop)
+  const outlinePositions = new Float32Array((numCorners + 1) * 3); // +1 to close loop
+  for (let i=0; i<numCorners; i++){
+    outlinePositions[i*3+0] = cornerPositions[i].x;
+    outlinePositions[i*3+1] = cornerPositions[i].y;
+    outlinePositions[i*3+2] = cornerPositions[i].z;
   }
-  // repeat first at end
-  arr[12] = cornerPositions[0].x; arr[13] = cornerPositions[0].y; arr[14] = cornerPositions[0].z;
+  // Close the loop
+  outlinePositions[numCorners*3+0] = cornerPositions[0].x;
+  outlinePositions[numCorners*3+1] = cornerPositions[0].y;
+  outlinePositions[numCorners*3+2] = cornerPositions[0].z;
+  
+  outline.geometry.setAttribute('position', new THREE.BufferAttribute(outlinePositions, 3));
   outline.geometry.attributes.position.needsUpdate = true;
-  geometry.computeVertexNormals();
+}
+
+// Add a new corner at the specified world position
+function addCorner(worldPos) {
+  const newPos = worldPos.clone();
+  cornerPositions.push(newPos);
+  targetCornerPositions.push(newPos.clone());
+  
+  // Create new sphere
+  const sphereMat = new THREE.MeshBasicMaterial({ color: defaultColor });
+  const s = new THREE.Mesh(sphereGeom, sphereMat);
+  s.position.copy(newPos);
+  s.renderOrder = 2;
+  s.userData.cornerIndex = cornerPositions.length - 1; // Store index for deletion
+  scene.add(s);
+  cornerSpheres.push(s);
+  originalSphereColors.push(defaultColor);
+  
+  applyCornerPositionsToGeometry();
+  console.log('Added corner at', newPos.x, newPos.y);
+}
+
+// Remove a corner by index
+function removeCorner(index) {
+  if (cornerPositions.length <= 3) {
+    console.log('Cannot remove corner - need at least 3 corners');
+    return;
+  }
+  
+  // Remove from arrays
+  cornerPositions.splice(index, 1);
+  targetCornerPositions.splice(index, 1);
+  originalSphereColors.splice(index, 1);
+  
+  // Remove sphere from scene
+  const sphere = cornerSpheres[index];
+  scene.remove(sphere);
+  sphere.geometry.dispose();
+  sphere.material.dispose();
+  cornerSpheres.splice(index, 1);
+  
+  // Update userData indices for remaining spheres
+  for (let i = index; i < cornerSpheres.length; i++) {
+    cornerSpheres[i].userData.cornerIndex = i;
+  }
+  
+  applyCornerPositionsToGeometry();
+  console.log('Removed corner', index);
 }
 
 // init corners to a visible square (proper rectangle) - make it larger and more visible
@@ -451,16 +539,16 @@ hands.onResults((results) => {
 });
 
 // simple 2D overlay showing hand landmarks/lines
-const handColors = ['#00e0ff', '#ff7a00'];
+const handLineColor = '#ffffff'; // white for hand connections
+const jointColor = '#ff0000'; // red for joints
 function drawHandsOverlay(handsLm) {
   if (!overlayCtx) return;
   overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
   handsLm.forEach((lm, idx) => {
-    const color = handColors[idx % handColors.length];
     const mapX = (x) => (1 - x) * overlayCanvas.width; // flip horizontally to match mirrored video
     const mapY = (y) => y * overlayCanvas.height;
-    // draw connections (subset)
+    // draw connections (subset) - WHITE
     const connections = [
       [0,1],[1,2],[2,3],[3,4],      // thumb
       [0,5],[5,6],[6,7],[7,8],      // index
@@ -470,8 +558,7 @@ function drawHandsOverlay(handsLm) {
       [0,17] // wrist to pinky base
     ];
     overlayCtx.lineWidth = 3;
-    overlayCtx.strokeStyle = color;
-    overlayCtx.fillStyle = color;
+    overlayCtx.strokeStyle = handLineColor; // white lines
     overlayCtx.globalAlpha = 0.9;
 
     overlayCtx.beginPath();
@@ -485,6 +572,8 @@ function drawHandsOverlay(handsLm) {
     });
     overlayCtx.stroke();
 
+    // Draw joints - RED
+    overlayCtx.fillStyle = jointColor; // red joints
     lm.forEach((p) => {
       const x = mapX(p.x);
       const y = mapY(p.y);
@@ -493,10 +582,10 @@ function drawHandsOverlay(handsLm) {
       overlayCtx.fill();
     });
 
-    // label
+    // label - white
     const wrist = lm[0];
     overlayCtx.font = '14px system-ui';
-    overlayCtx.fillStyle = color;
+    overlayCtx.fillStyle = handLineColor; // white text
     overlayCtx.fillText(`Hand ${idx+1}`, mapX(wrist.x) + 8, mapY(wrist.y) - 8);
   });
 }
@@ -566,7 +655,7 @@ function findNearestCorner(ndcX, ndcY) {
   let minDist = Infinity;
   const pickThreshold = 0.15; // NDC units, more generous for easier grabbing
   
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < cornerPositions.length; i++) {
     const cp = cornerPositions[i].clone();
     cp.project(camera);
     const dx = cp.x - ndcX;
@@ -629,7 +718,7 @@ function handleMouseMove(e) {
         hoveredCorner = corner;
         if (hoveredCorner >= 0 && hoveredCorner !== mouseSelectedCorner) {
           // Lighten the color on hover
-          cornerSpheres[hoveredCorner].material.color.setHex(0xffaa00); // lighter orange
+          cornerSpheres[hoveredCorner].material.color.setHex(hoverColor); // lighter red
         }
       }
     }
@@ -670,6 +759,60 @@ function handleMouseLeave(e) {
 }
 
 renderer.domElement.addEventListener('mouseleave', handleMouseLeave);
+
+// ============ RIGHT-CLICK FUNCTIONALITY ============
+let contextMenuCornerIndex = -1;
+
+// Check if click is near window edge
+function isNearWindowEdge(ndcX, ndcY, threshold = 0.85) {
+  return Math.abs(ndcX) > threshold || Math.abs(ndcY) > threshold;
+}
+
+// Right-click handler - spawn segment on edge or show context menu
+renderer.domElement.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  const ndc = mouseToNDC(e.clientX, e.clientY);
+  
+  // Check if right-clicking on a corner
+  const corner = findNearestCorner(ndc.x, ndc.y);
+  if (corner >= 0) {
+    // Show context menu for deleting
+    contextMenuCornerIndex = corner;
+    contextMenu.style.display = 'block';
+    contextMenu.style.left = e.clientX + 'px';
+    contextMenu.style.top = e.clientY + 'px';
+    return;
+  }
+  
+  // Check if clicking near window edge
+  if (isNearWindowEdge(ndc.x, ndc.y)) {
+    // Spawn new segment at edge
+    const worldPt = ndcToWorld(ndc.x, ndc.y);
+    addCorner(worldPt);
+  } else {
+    // Hide context menu if clicking elsewhere
+    contextMenu.style.display = 'none';
+  }
+});
+
+// Close context menu when clicking elsewhere
+window.addEventListener('click', (e) => {
+  if (contextMenu && !contextMenu.contains(e.target)) {
+    contextMenu.style.display = 'none';
+    contextMenuCornerIndex = -1;
+  }
+});
+
+// Delete segment button
+if (deleteSegmentBtn) {
+  deleteSegmentBtn.addEventListener('click', () => {
+    if (contextMenuCornerIndex >= 0) {
+      removeCorner(contextMenuCornerIndex);
+      contextMenu.style.display = 'none';
+      contextMenuCornerIndex = -1;
+    }
+  });
+}
 
 // Touch support for mobile
 renderer.domElement.addEventListener('touchstart', (e) => {

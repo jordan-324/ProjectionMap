@@ -96,6 +96,19 @@
 
     /* small help text */
     .help { position: absolute; left:12px; bottom: 12px; color:#ddd; font-size:13px; z-index:20; background: rgba(0,0,0,0.2); padding:6px 8px; border-radius:6px; pointer-events: none; }
+    
+    /* Context menu for deleting segments */
+    #contextMenu {
+      position: fixed; z-index: 1000; background: rgba(0,0,0,0.9);
+      border: 1px solid rgba(255,255,255,0.3); border-radius: 6px;
+      padding: 4px 0; min-width: 150px; display: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    #contextMenu button {
+      width: 100%; padding: 8px 16px; border: none; background: transparent;
+      color: #fff; text-align: left; cursor: pointer; font-size: 14px;
+    }
+    #contextMenu button:hover { background: rgba(255,255,255,0.1); }
   </style>
 </head>
 <body>
@@ -126,6 +139,11 @@
 
   <div id="helpers"></div>
   <div class="help" id="helpText">Waiting for camera…</div>
+  
+  <!-- Context menu for deleting segments -->
+  <div id="contextMenu">
+    <button id="deleteSegment">Delete Segment</button>
+  </div>
 
   <!-- MediaPipe (hands) -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
