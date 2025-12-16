@@ -14,13 +14,17 @@
       position: absolute; left: 12px; top: 12px; z-index: 20;
       background: rgba(0,0,0,0.35); color: #fff; padding: 8px; border-radius: 8px;
       backdrop-filter: blur(6px);
+      pointer-events: auto; /* UI buttons are clickable */
+    }
+    .ui * {
+      pointer-events: auto; /* All UI children are clickable */
     }
     .ui button { margin:4px; padding:6px 10px; border-radius:6px; border:none; background:#222; color:#fff; cursor:pointer }
     .ui input[type=file] { display:none; }
     #helpers { position:absolute; right:12px; top:12px; z-index:20; color:#fff; pointer-events:none; }
 
     /* small help text */
-    .help { position: absolute; left:12px; bottom: 12px; color:#ddd; font-size:13px; z-index:20; background: rgba(0,0,0,0.2); padding:6px 8px; border-radius:6px }
+    .help { position: absolute; left:12px; bottom: 12px; color:#ddd; font-size:13px; z-index:20; background: rgba(0,0,0,0.2); padding:6px 8px; border-radius:6px; pointer-events: none; }
   </style>
 </head>
 <body>

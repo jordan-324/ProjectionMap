@@ -36,13 +36,8 @@ let backgroundMesh = null;
 let overlayCanvas = null;
 let overlayCtx = null;
 
-// Small on-page preview to verify the webcam feed (slightly transparent, non-interactive)
-camVideo.id = 'camPreview';
-camVideo.width = 320;
-camVideo.height = 180;
-camVideo.style.cssText = 'position:fixed; bottom:12px; left:12px; width:240px; height:135px; opacity:0.4; z-index:50; pointer-events:none; background:#111;';
-// Mirror the video element for a selfie-style preview
-camVideo.style.transform = 'scaleX(-1)';
+// Video element is hidden - only used for texture, no preview
+camVideo.style.display = 'none';
 
 function attachVideoTexture() {
   if (camVideo.videoWidth > 0 && camVideo.videoHeight > 0) {
@@ -136,8 +131,8 @@ const light = new THREE.AmbientLight(0xffffff, 1.0);
 scene.add(light);
 
 // full-screen background plane (shows webcam) - SIMPLIFIED
-// Use a large fixed size that will definitely fill the screen
-const bgSize = 10; // large enough to fill viewport from camera at z=2
+// Use a large fixed size that will definitely fill the screen - ZOOMED OUT
+const bgSize = 15; // increased from 10 to zoom out the background
 const bgGeo = new THREE.PlaneGeometry(bgSize, bgSize);
 const bgPlaceholder = new THREE.DataTexture(new Uint8Array([50, 50, 50, 255]), 1, 1, THREE.RGBAFormat);
 bgPlaceholder.needsUpdate = true;
@@ -582,8 +577,14 @@ function findNearestCorner(ndcX, ndcY) {
   return nearest;
 }
 
-// Mouse down - select corner
-renderer.domElement.addEventListener('mousedown', (e) => {
+// Mouse down - select corner (works even under UI overlays)
+function handleMouseDown(e) {
+  // Check if clicking on a UI button - if so, don't interfere
+  const target = e.target;
+  if (target.tagName === 'BUTTON' || target.closest('.ui')) {
+    return; // Let UI handle the click
+  }
+  
   const ndc = mouseToNDC(e.clientX, e.clientY);
   const corner = findNearestCorner(ndc.x, ndc.y);
   
@@ -593,39 +594,50 @@ renderer.domElement.addEventListener('mousedown', (e) => {
     // Change color to indicate selection
     cornerSpheres[corner].material.color.setHex(grabbedColor);
     e.preventDefault();
+    e.stopPropagation();
   }
-});
+}
 
-// Mouse move - drag corner or show hover
+renderer.domElement.addEventListener('mousedown', handleMouseDown);
+window.addEventListener('mousedown', handleMouseDown, true); // Capture phase to catch events before UI
+
+// Mouse move - drag corner or show hover (works even under UI overlays)
 let hoveredCorner = -1;
-renderer.domElement.addEventListener('mousemove', (e) => {
+function handleMouseMove(e) {
   const ndc = mouseToNDC(e.clientX, e.clientY);
   
   if (isMouseDragging && mouseSelectedCorner >= 0) {
-    // Dragging
+    // Dragging - always work even if over UI
     const worldPt = ndcToWorld(ndc.x, ndc.y);
     targetCornerPositions[mouseSelectedCorner].copy(worldPt);
     e.preventDefault();
+    e.stopPropagation();
   } else {
-    // Hover detection
-    const corner = findNearestCorner(ndc.x, ndc.y);
-    if (corner !== hoveredCorner) {
-      // Reset previous hover
-      if (hoveredCorner >= 0 && hoveredCorner !== mouseSelectedCorner) {
-        cornerSpheres[hoveredCorner].material.color.setHex(originalSphereColors[hoveredCorner]);
-      }
-      // Set new hover
-      hoveredCorner = corner;
-      if (hoveredCorner >= 0 && hoveredCorner !== mouseSelectedCorner) {
-        // Lighten the color on hover
-        cornerSpheres[hoveredCorner].material.color.setHex(0xffaa00); // lighter orange
+    // Hover detection - only if not over UI
+    const target = e.target;
+    if (!target.closest('.ui') && target !== helpText) {
+      const corner = findNearestCorner(ndc.x, ndc.y);
+      if (corner !== hoveredCorner) {
+        // Reset previous hover
+        if (hoveredCorner >= 0 && hoveredCorner !== mouseSelectedCorner) {
+          cornerSpheres[hoveredCorner].material.color.setHex(originalSphereColors[hoveredCorner]);
+        }
+        // Set new hover
+        hoveredCorner = corner;
+        if (hoveredCorner >= 0 && hoveredCorner !== mouseSelectedCorner) {
+          // Lighten the color on hover
+          cornerSpheres[hoveredCorner].material.color.setHex(0xffaa00); // lighter orange
+        }
       }
     }
   }
-});
+}
 
-// Mouse up - release corner
-renderer.domElement.addEventListener('mouseup', (e) => {
+renderer.domElement.addEventListener('mousemove', handleMouseMove);
+window.addEventListener('mousemove', handleMouseMove, true); // Capture phase
+
+// Mouse up - release corner (works even under UI overlays)
+function handleMouseUp(e) {
   if (isMouseDragging && mouseSelectedCorner >= 0) {
     // Restore original color
     cornerSpheres[mouseSelectedCorner].material.color.setHex(originalSphereColors[mouseSelectedCorner]);
@@ -633,11 +645,15 @@ renderer.domElement.addEventListener('mouseup', (e) => {
     isMouseDragging = false;
     hoveredCorner = -1;
     e.preventDefault();
+    e.stopPropagation();
   }
-});
+}
+
+renderer.domElement.addEventListener('mouseup', handleMouseUp);
+window.addEventListener('mouseup', handleMouseUp, true); // Capture phase
 
 // Mouse leave - release if dragging
-renderer.domElement.addEventListener('mouseleave', (e) => {
+function handleMouseLeave(e) {
   if (isMouseDragging && mouseSelectedCorner >= 0) {
     cornerSpheres[mouseSelectedCorner].material.color.setHex(originalSphereColors[mouseSelectedCorner]);
     mouseSelectedCorner = -1;
@@ -648,7 +664,9 @@ renderer.domElement.addEventListener('mouseleave', (e) => {
     cornerSpheres[hoveredCorner].material.color.setHex(originalSphereColors[hoveredCorner]);
     hoveredCorner = -1;
   }
-});
+}
+
+renderer.domElement.addEventListener('mouseleave', handleMouseLeave);
 
 // Touch support for mobile
 renderer.domElement.addEventListener('touchstart', (e) => {
