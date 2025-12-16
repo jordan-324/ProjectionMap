@@ -756,14 +756,16 @@ menuToggle.addEventListener('click', (e) => {
   menuOpen = !menuOpen;
   
   if (menuOpen) {
-    // Open menu - animate + to X
+    // Open menu - animate + to X, swap colors
     toggleIcon.classList.remove('plus');
     toggleIcon.classList.add('x');
+    menuToggle.classList.add('open'); // Button becomes white
     controlsPanel.classList.add('open');
   } else {
-    // Close menu - animate X to +
+    // Close menu - animate X to +, swap colors back
     toggleIcon.classList.remove('x');
     toggleIcon.classList.add('plus');
+    menuToggle.classList.remove('open'); // Button becomes red
     controlsPanel.classList.remove('open');
   }
 });

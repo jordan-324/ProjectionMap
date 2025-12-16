@@ -13,17 +13,36 @@
     #menuToggle {
       position: absolute; left: 12px; top: 12px; z-index: 21;
       width: 48px; height: 48px; border-radius: 50%;
-      background: rgba(0,0,0,0.6); border: 2px solid rgba(255,255,255,0.3);
+      background: #ff0000; /* Red background by default */
+      border: 2px solid #ff0000;
       cursor: pointer; display: flex; align-items: center; justify-content: center;
-      transition: all 0.3s ease; backdrop-filter: blur(6px);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); backdrop-filter: blur(6px);
     }
-    #menuToggle:hover { background: rgba(0,0,0,0.8); border-color: rgba(255,255,255,0.5); }
+    #menuToggle:hover { 
+      background: #ff3333; 
+      border-color: #ff3333; 
+      transform: scale(1.05);
+    }
+    /* When menu is open, button becomes white */
+    #menuToggle.open {
+      background: #ffffff;
+      border-color: #ffffff;
+    }
+    #menuToggle.open:hover {
+      background: #f0f0f0;
+      border-color: #f0f0f0;
+    }
     
     /* Plus/X icon animation */
     .toggle-icon { position: relative; width: 24px; height: 24px; }
     .toggle-icon span {
-      position: absolute; display: block; background: #fff;
+      position: absolute; display: block;
+      background: #ffffff; /* White by default (on red button) */
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    /* When menu is open, icon becomes red (on white button) */
+    .toggle-icon.x span {
+      background: #ff0000; /* Red X on white button */
     }
     /* Plus icon (default) */
     .toggle-icon.plus span:first-child {
