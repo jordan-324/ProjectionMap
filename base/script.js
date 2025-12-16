@@ -316,14 +316,45 @@ function updateGeometryForPolygon() {
   // Update positions array
   const newPositions = new Float32Array(numCorners * 3);
   const newUVs = new Float32Array(numCorners * 2);
+
+  // Standard UVs for the initial quad (free-transform style)
+  // Order: TL, TR, BR, BL
+  const standardUVs = [
+    [0, 1], // TL
+    [1, 1], // TR
+    [1, 0], // BR
+    [0, 0]  // BL
+  ];
+
+  // Compute bounds for any additional corners (when user adds segments)
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < numCorners; i++) {
+    minX = Math.min(minX, cornerPositions[i].x);
+    maxX = Math.max(maxX, cornerPositions[i].x);
+    minY = Math.min(minY, cornerPositions[i].y);
+    maxY = Math.max(maxY, cornerPositions[i].y);
+  }
+  const rangeX = maxX - minX;
+  const rangeY = maxY - minY;
   
   for (let i = 0; i < numCorners; i++) {
     newPositions[i*3+0] = cornerPositions[i].x;
     newPositions[i*3+1] = cornerPositions[i].y;
     newPositions[i*3+2] = cornerPositions[i].z;
-    // Simple UV mapping
-    newUVs[i*2+0] = (cornerPositions[i].x + 1) / 2;
-    newUVs[i*2+1] = (cornerPositions[i].y + 1) / 2;
+
+    if (i < 4) {
+      // Anchor the first 4 corners to fixed UVs for true free-transform warping
+      newUVs[i*2+0] = standardUVs[i][0];
+      newUVs[i*2+1] = standardUVs[i][1];
+    } else if (rangeX > 0 && rangeY > 0) {
+      // Map extra corners relative to current bounds so they also distort the texture
+      newUVs[i*2+0] = (cornerPositions[i].x - minX) / rangeX;
+      newUVs[i*2+1] = 1.0 - (cornerPositions[i].y - minY) / rangeY; // flip Y for texture space
+    } else {
+      // Fallback simple mapping
+      newUVs[i*2+0] = (cornerPositions[i].x + 1) / 2;
+      newUVs[i*2+1] = (cornerPositions[i].y + 1) / 2;
+    }
   }
   
   // Create indices for triangulation (fan from vertex 0)
