@@ -253,12 +253,12 @@ let targetScale = 1.0; // For smooth interpolation
 const scaleSmoothing = 0.15; // Smoothing factor for scale (lower = smoother, more lag)
 const scaleSensitivity = 3.0; // How sensitive the Y-axis movement is for scaling
 
-// Right hand rotation state
+// Right hand rotation state (Y-axis rotation for left/right)
 let rightHandActive = false;
 let startHandX = 0; // Initial hand X position when rotation starts
-let startRotationX = 0;
-let currentRotationX = 0;
-let targetRotationX = 0;
+let startRotationY = 0;
+let currentRotationY = 0;
+let targetRotationY = 0;
 const rotationSmoothing = 0.2; // Smoothing factor for rotation
 const rotationSensitivity = 2.0; // How sensitive the X-axis movement is for rotation
 
@@ -600,7 +600,7 @@ hands.onResults((results) => {
     }
   }
 
-  // RIGHT HAND: X-axis controls 3D rotation (no pinch needed, just hand presence)
+  // RIGHT HAND: X-axis controls Y-axis rotation (left/right, no pinch needed, just hand presence)
   if (rightHand) {
     const wrist = rightHand[0];
     const currentHandX = wrist.x; // X position in normalized coordinates (0-1)
@@ -609,23 +609,23 @@ hands.onResults((results) => {
       // Just detected right hand - initialize rotation
       rightHandActive = true;
       startHandX = currentHandX;
-      startRotationX = currentRotationX;
-      targetRotationX = currentRotationX;
+      startRotationY = currentRotationY;
+      targetRotationY = currentRotationY;
     } else {
       // Continue tracking - update rotation based on X-axis movement
       // X position: 0 = left, 1 = right
-      // Convert to rotation: center (0.5) = 0 rotation, left = negative, right = positive
+      // Convert to Y-axis rotation: center (0.5) = 0 rotation, left = negative (rotate left), right = positive (rotate right)
       const xDelta = (currentHandX - startHandX) * rotationSensitivity;
-      targetRotationX = startRotationX + xDelta * Math.PI; // Scale to radians
+      targetRotationY = startRotationY + xDelta * Math.PI; // Scale to radians
       
       // Clamp rotation to reasonable range
-      targetRotationX = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetRotationX));
+      targetRotationY = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetRotationY));
     }
   } else {
     // Right hand disappeared
     if (rightHandActive) {
       rightHandActive = false;
-      targetRotationX = currentRotationX; // Lock current rotation
+      targetRotationY = currentRotationY; // Lock current rotation
     }
   }
 
@@ -634,7 +634,7 @@ hands.onResults((results) => {
     if (leftHandPinching) {
       helpText.innerText = `Scaling: ${currentScale.toFixed(2)}x`;
     } else if (rightHandActive) {
-      helpText.innerText = `Rotating: ${(currentRotationX * 180 / Math.PI).toFixed(1)}°`;
+      helpText.innerText = `Rotating: ${(currentRotationY * 180 / Math.PI).toFixed(1)}°`;
     } else {
       helpText.innerText = 'Left hand: Y-axis for scale. Right hand: X-axis for rotation.';
     }
@@ -722,18 +722,18 @@ function animate(){
     currentScale = currentScale + (targetScale - currentScale) * 0.1;
   }
   
-  // Smooth rotation interpolation
+  // Smooth rotation interpolation (Y-axis for left/right)
   if (rightHandActive) {
     // When actively rotating, use faster interpolation for responsiveness
-    currentRotationX = currentRotationX + (targetRotationX - currentRotationX) * (1 - rotationSmoothing);
+    currentRotationY = currentRotationY + (targetRotationY - currentRotationY) * (1 - rotationSmoothing);
   } else {
     // When not rotating, smoothly settle to target
-    currentRotationX = currentRotationX + (targetRotationX - currentRotationX) * 0.1;
+    currentRotationY = currentRotationY + (targetRotationY - currentRotationY) * 0.1;
   }
   
   // Apply scale and rotation to windowGroup (origami-like transformation)
   windowGroup.scale.set(currentScale, currentScale, currentScale);
-  windowGroup.rotation.x = currentRotationX; // X-axis rotation from right hand
+  windowGroup.rotation.y = currentRotationY; // Y-axis rotation (left/right) from right hand X-axis movement
   
   // update video textures if they're videos (Three.VideoTexture auto-updates)
   if (videoTexture && videoTexture.image && videoTexture.image.readyState >= 2) {
