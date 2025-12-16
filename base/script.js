@@ -207,7 +207,7 @@ for (let i=0;i<4;i++){
   const s = new THREE.Mesh(sphereGeom, sphereMat);
   s.position.copy(cornerPositions[i]);
   s.renderOrder = 2; // render on top
-  scene.add(s);
+  windowGroup.add(s); // Add to windowGroup so it scales/rotates with the mesh
   cornerSpheres.push(s);
   originalSphereColors.push(defaultColor);
   targetCornerPositions.push(cornerPositions[i].clone());
@@ -226,7 +226,7 @@ const initialLinePos = new Float32Array([
 lineGeom.setAttribute('position', new THREE.BufferAttribute(initialLinePos, 3));
 const outline = new THREE.LineLoop(lineGeom, outlineMat); // LineLoop automatically connects last to first
 outline.renderOrder = 2; // render on top
-scene.add(outline);
+windowGroup.add(outline); // Add to windowGroup so it scales/rotates with the mesh
 
 // ============ Interaction State ============
 let mouseSelectedCorner = -1; // for mouse interaction
@@ -245,13 +245,13 @@ const scaleSmoothing = 0.15; // Smoothing factor for scale (lower = smoother, mo
 const scaleSensitivity = 3.0; // How sensitive the Y-axis movement is for scaling
 
 let rightHandPinching = false;
-let rightScrollModeActive = false; // Pinch enables scroll mode for panning
+let rightScrollModeActive = false; // Pinch enables scroll mode for rotation
 let startHandX = 0; // Initial hand X position when scroll mode starts
-let startTextureOffsetX = 0; // Initial texture offset when scroll starts
-let currentTextureOffsetX = 0; // Current texture offset (for panning left/right)
-let targetTextureOffsetX = 0; // Target texture offset
-const texturePanSmoothing = 0.15; // Smoothing factor for texture panning
-const texturePanSensitivity = 2.0; // How sensitive the X-axis movement is for panning
+let startRotationY = 0;
+let currentRotationY = 0;
+let targetRotationY = 0;
+const rotationSmoothing = 0.2; // Smoothing factor for rotation
+const rotationSensitivity = 2.0; // How sensitive the X-axis movement is for rotation
 
 // Note: targetCornerPositions and originalSphereColors are declared above with corner spheres
 
@@ -355,7 +355,7 @@ function addCorner(worldPos) {
   s.position.copy(newPos);
   s.renderOrder = 2;
   s.userData.cornerIndex = cornerPositions.length - 1; // Store index for deletion
-  scene.add(s);
+  windowGroup.add(s); // Add to windowGroup so it scales/rotates with the mesh
   cornerSpheres.push(s);
   originalSphereColors.push(defaultColor);
   
@@ -375,9 +375,9 @@ function removeCorner(index) {
   targetCornerPositions.splice(index, 1);
   originalSphereColors.splice(index, 1);
   
-  // Remove sphere from scene
+  // Remove sphere from windowGroup
   const sphere = cornerSpheres[index];
-  scene.remove(sphere);
+  windowGroup.remove(sphere);
   sphere.geometry.dispose();
   sphere.material.dispose();
   cornerSpheres.splice(index, 1);
@@ -536,7 +536,7 @@ hands.onResults((results) => {
     }
   }
 
-  // RIGHT HAND: Pinch enables scroll mode, then X-axis controls texture panning (left/right)
+  // RIGHT HAND: Pinch enables scroll mode, then X-axis controls Y-axis rotation (left/right orientation)
   if (rightHand) {
     const rightPinching = isPinching(rightHand);
     
@@ -549,35 +549,35 @@ hands.onResults((results) => {
       rightHandPinching = true;
       rightScrollModeActive = true;
       startHandX = currentHandX; // Store initial hand X position
-      startTextureOffsetX = currentTextureOffsetX;
-      targetTextureOffsetX = currentTextureOffsetX; // Sync target with current
+      startRotationY = currentRotationY;
+      targetRotationY = currentRotationY; // Sync target with current
     } else if (rightPinching && rightHandPinching && rightScrollModeActive) {
-      // Continue in scroll mode - pan texture left/right based on X position
+      // Continue in scroll mode - rotate based on X position
       // Calculate X delta (in MediaPipe coords: 0 = left, 1 = right)
       const xDelta = currentHandX - startHandX;
       
-      // Pan texture: X movement controls X offset (left/right panning)
-      // Hand left (smaller X, negative delta) = pan left (negative offset)
-      // Hand right (larger X, positive delta) = pan right (positive offset)
-      const panDelta = xDelta * texturePanSensitivity;
-      targetTextureOffsetX = startTextureOffsetX + panDelta;
+      // Rotate: X movement controls Y-axis rotation (left/right orientation)
+      // Hand left (smaller X, negative delta) = rotate left (negative Y rotation)
+      // Hand right (larger X, positive delta) = rotate right (positive Y rotation)
+      const rotationDelta = xDelta * rotationSensitivity * Math.PI; // Scale to radians
+      targetRotationY = startRotationY + rotationDelta;
       
-      // Clamp texture offset to reasonable range (can pan within texture bounds)
-      targetTextureOffsetX = Math.max(-1.0, Math.min(1.0, targetTextureOffsetX));
+      // Clamp rotation to reasonable range
+      targetRotationY = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, targetRotationY));
       
-      // Target offset is set, smoothing will happen in render loop
+      // Target rotation is set, smoothing will happen in render loop
     } else if (!rightPinching && rightHandPinching) {
       // Released pinch - exit scroll mode
       rightHandPinching = false;
       rightScrollModeActive = false;
-      targetTextureOffsetX = currentTextureOffsetX; // Lock current offset
+      targetRotationY = currentRotationY; // Lock current rotation
     }
   } else {
     // Right hand disappeared
     if (rightHandPinching || rightScrollModeActive) {
       rightHandPinching = false;
       rightScrollModeActive = false;
-      targetTextureOffsetX = currentTextureOffsetX;
+      targetRotationY = currentRotationY;
     }
   }
 
@@ -586,9 +586,9 @@ hands.onResults((results) => {
     if (leftHandPinching) {
       helpText.innerText = `Scaling: ${currentScale.toFixed(2)}x`;
     } else if (rightHandPinching) {
-      helpText.innerText = `Panning: ${currentTextureOffsetX.toFixed(2)}`;
+      helpText.innerText = `Rotating: ${(currentRotationY * 180 / Math.PI).toFixed(1)}°`;
     } else {
-      helpText.innerText = 'Left hand: Pinch + Y-axis for scale. Right hand: Pinch + X-axis for panning.';
+      helpText.innerText = 'Left hand: Pinch + Y-axis for scale. Right hand: Pinch + X-axis for rotation.';
     }
   }
 });
@@ -674,24 +674,18 @@ function animate(){
     currentScale = currentScale + (targetScale - currentScale) * 0.1;
   }
   
-  // Smooth interpolation of texture offset for panning
+  // Smooth interpolation of rotation (Y-axis for left/right orientation)
   if (rightHandPinching && rightScrollModeActive) {
-    // When actively panning, use faster interpolation for responsiveness
-    currentTextureOffsetX = currentTextureOffsetX + (targetTextureOffsetX - currentTextureOffsetX) * (1 - texturePanSmoothing);
+    // When actively rotating, use faster interpolation for responsiveness
+    currentRotationY = currentRotationY + (targetRotationY - currentRotationY) * (1 - rotationSmoothing);
   } else {
-    // When not panning, smoothly settle to target
-    currentTextureOffsetX = currentTextureOffsetX + (targetTextureOffsetX - currentTextureOffsetX) * 0.1;
+    // When not rotating, smoothly settle to target
+    currentRotationY = currentRotationY + (targetRotationY - currentRotationY) * 0.1;
   }
   
-  // Apply texture offset to pan the texture left/right
-  if (videoTexture && material && material.map === videoTexture) {
-    // Update texture offset (X-axis for left/right panning)
-    // Note: videoTexture already has offset.x = 1 for mirroring, so we add to that
-    videoTexture.offset.x = 1 + currentTextureOffsetX;
-  }
-  
-  // Apply scale to windowGroup (origami-like transformation)
+  // Apply scale and rotation to windowGroup (origami-like transformation)
   windowGroup.scale.set(currentScale, currentScale, currentScale);
+  windowGroup.rotation.y = currentRotationY; // Y-axis rotation (left/right) from right hand X-axis movement
   
   // update video textures if they're videos (Three.VideoTexture auto-updates)
   if (videoTexture && videoTexture.image && videoTexture.image.readyState >= 2) {
